@@ -13,6 +13,9 @@ void GuestStackRegister_nid_no_patch(const void* pointer, std::size_t bytes);
 void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer);
 #ifdef _WIN32
 [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*));
+bool GuestStackIsRegistered_nid_no_patch(std::uintptr_t address);
+void GuestStackNoteMainHostBounds_nid_no_patch(std::uintptr_t base, std::uintptr_t limit, std::uintptr_t deallocation);
+bool GuestStackMainHostBounds_nid_no_patch(std::uintptr_t* base, std::uintptr_t* limit, std::uintptr_t* deallocation);
 #endif
 
 }

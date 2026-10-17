@@ -13,6 +13,14 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#include <atomic>
+#include <chrono>
+#include <thread>
+#include <vector>
+#include <windows.h>
+#include <process.h>
+#endif
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -83,6 +91,7 @@ static void* APS5_VABI Worker(void* arg) {
 #endif
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(size == requested);
+    Require(reinterpret_cast<std::uintptr_t>(address) >= 0x100000000ull);
 
     const auto begin = reinterpret_cast<std::uintptr_t>(address);
     const auto local = reinterpret_cast<std::uintptr_t>(&size);
@@ -148,6 +157,48 @@ static void RequireCachedStackDiscarded(const StackProbe& probe) {
 static bool ReusesOneOf(const StackProbe& probe, const StackProbe* previous, std::size_t count) {
     for (std::size_t i = 0; i < count; ++i) if (probe.stack == previous[i].stack) return true;
     return false;
+}
+#endif
+
+#ifdef _WIN32
+static constexpr std::size_t EXIT_CANCEL_STACK = 65536;
+static constexpr int EXIT_CANCEL_COUNT = 4;
+static void* const CANCELED_VALUE = reinterpret_cast<void*>(std::uintptr_t{1});
+static std::atomic<int> cancelReady{0};
+
+static void* APS5_VABI ExitWorker(void* arg) {
+    scePthreadExit(arg);
+    return nullptr;
+}
+
+static void* APS5_VABI CancelWorker(void*) {
+    cancelReady.fetch_add(1, std::memory_order_release);
+    for (;;) sceKernelUsleep_nid_postfix(1000);
+}
+
+static unsigned __stdcall AdoptedExit(void*) {
+    scePthreadSelf();
+    scePthreadExit(nullptr);
+    return 1;
+}
+
+static void RequireUncommitted(std::uintptr_t address) {
+    MEMORY_BASIC_INFORMATION memory{};
+    Require(VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) == sizeof(memory));
+    Require(memory.State != MEM_COMMIT);
+}
+
+static std::uintptr_t QueryGuestLow(Pthread thread) {
+    PthreadAttr attr = nullptr;
+    Require(scePthreadAttrInit(&attr) == SCE_OK);
+    Require(scePthreadAttrGet(thread, &attr) == SCE_OK);
+    void* address = nullptr;
+    std::size_t size = 0;
+    Require(scePthreadAttrGetstack(&attr, &address, &size) == SCE_OK);
+    Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    Require(size == EXIT_CANCEL_STACK);
+    Require(reinterpret_cast<std::uintptr_t>(address) >= 0x100000000ull);
+    return reinterpret_cast<std::uintptr_t>(address);
 }
 #endif
 
@@ -251,5 +302,69 @@ int main() {
     }
     Require(observedUnmaps.load(std::memory_order_relaxed) != 0);
     GuestAllocations::GuestAllocationsSetUnmapObserver_nid_postfix(nullptr);
+#endif
+#ifdef _WIN32
+    {
+        std::vector<Pthread> exits;
+        std::vector<std::uintptr_t> lows;
+        std::vector<void*> args;
+        args.reserve(EXIT_CANCEL_COUNT);
+        for (int index = 0; index < EXIT_CANCEL_COUNT; ++index) {
+            args.push_back(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xE110 + index)));
+        }
+        for (int index = 0; index < EXIT_CANCEL_COUNT; ++index) {
+            PthreadAttr attr = nullptr;
+            Require(scePthreadAttrInit(&attr) == SCE_OK);
+            Require(scePthreadAttrSetstacksize(&attr, EXIT_CANCEL_STACK) == SCE_OK);
+            Pthread thread = nullptr;
+            Require(scePthreadCreate(&thread, &attr, ExitWorker, args[index], nullptr) == SCE_OK);
+            Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+            lows.push_back(QueryGuestLow(thread));
+            exits.push_back(thread);
+        }
+        for (int index = 0; index < EXIT_CANCEL_COUNT; ++index) {
+            void* result = nullptr;
+            Require(scePthreadJoin(exits[index], &result) == SCE_OK);
+            Require(result == args[index]);
+        }
+        for (auto low : lows) RequireUncommitted(low);
+    }
+    {
+        cancelReady.store(0, std::memory_order_release);
+        std::vector<Pthread> cancels;
+        std::vector<std::uintptr_t> lows;
+        for (int index = 0; index < EXIT_CANCEL_COUNT; ++index) {
+            PthreadAttr attr = nullptr;
+            Require(scePthreadAttrInit(&attr) == SCE_OK);
+            Require(scePthreadAttrSetstacksize(&attr, EXIT_CANCEL_STACK) == SCE_OK);
+            Pthread thread = nullptr;
+            Require(scePthreadCreate(&thread, &attr, CancelWorker, nullptr, nullptr) == SCE_OK);
+            Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+            lows.push_back(QueryGuestLow(thread));
+            cancels.push_back(thread);
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (cancelReady.load(std::memory_order_acquire) != EXIT_CANCEL_COUNT) {
+            Require(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        for (auto thread : cancels) Require(scePthreadCancel(thread) == SCE_OK);
+        for (auto thread : cancels) {
+            void* result = nullptr;
+            Require(scePthreadJoin(thread, &result) == SCE_OK);
+            Require(result == CANCELED_VALUE);
+        }
+        for (auto low : lows) RequireUncommitted(low);
+    }
+    {
+        const auto raw = _beginthreadex(nullptr, 0, AdoptedExit, nullptr, 0, nullptr);
+        Require(raw != 0);
+        HANDLE handle = reinterpret_cast<HANDLE>(raw);
+        Require(WaitForSingleObject(handle, 20000) == WAIT_OBJECT_0);
+        DWORD code = 0;
+        Require(GetExitCodeThread(handle, &code) != 0 && code == 0);
+        Require(CloseHandle(handle) != 0);
+    }
 #endif
 }
