@@ -79,16 +79,16 @@ struct KernelArena {
     void Release(const void* pointer, size_t len) { GuestArena::GuestArenaRelease_nid_postfix(pointer, len); }
 };
 
-static void CommitArenaRange(void* addr, size_t len, DWORD winProt) {
-    GuestArena::GuestArenaCommit_nid_postfix(addr, len, winProt, PS5_PAGE_SIZE);
+static void CommitArenaRange(void* addr, size_t len, DWORD winProt, size_t granule = 0) {
+    GuestArena::GuestArenaCommit_nid_postfix(addr, len, winProt, granule != 0 ? granule : PS5_PAGE_SIZE);
 }
 
-static void* mmap_aligned(size_t len, int prot, size_t alignment, std::uintptr_t hint = 0) {
+static void* mmap_aligned(size_t len, int prot, size_t alignment, size_t granule, std::uintptr_t hint = 0) {
     auto& arena = KernelArena::Get();
     void* result = GuestArena::GuestArenaAllocateFromHint_nid_postfix(hint, len, alignment);
     if (prot != PROT_NONE) {
         try {
-            CommitArenaRange(result, len, WinProtFromPosix(prot));
+            CommitArenaRange(result, len, WinProtFromPosix(prot), granule);
         } catch (...) {
             arena.Release(result, len);
             throw;
@@ -97,7 +97,7 @@ static void* mmap_aligned(size_t len, int prot, size_t alignment, std::uintptr_t
     return result;
 }
 
-static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
+static void* mmap(void* addr, size_t len, int prot, int flags, int, int, size_t granule) {
     DWORD winProt = WinProtFromPosix(prot);
     if (flags & MAP_FIXED) {
         auto& arena = KernelArena::Get();
@@ -105,7 +105,7 @@ static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
             arena.MarkUsed(addr, len);
             if (prot != PROT_NONE) {
                 try {
-                    CommitArenaRange(addr, len, winProt);
+                    CommitArenaRange(addr, len, winProt, granule);
                 } catch (...) {
                     arena.Release(addr, len);
                     throw;
@@ -117,7 +117,7 @@ static void* mmap(void* addr, size_t len, int prot, int flags, int, int) {
         if (!result) throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "VirtualAlloc fixed failed");
         return result;
     }
-    return mmap_aligned(len, prot, PS5_PAGE_SIZE);
+    return mmap_aligned(len, prot, PS5_PAGE_SIZE, granule);
 }
 
 static int munmap(void* addr, size_t len) {
@@ -1113,7 +1113,7 @@ void Unmap(void* addr, size_t len) {
 #endif
 }
 
-void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
+void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment, size_t commitGranule = 0) {
     ValidateLength(len);
     alignment = ValidateAlignment(alignment);
     constexpr int GuestMapFixed = 0x10;
@@ -1169,7 +1169,7 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
 #elif defined(__APPLE__)
         void* result = (flags & GuestMapNoOverwrite) != 0 ? MapFixedNoReplace(addr, len, prot) : mmap(addr, len, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 #else
-        void* result = mmap(addr, len, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        void* result = mmap(addr, len, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0, commitGranule);
 #endif
         if (result == MAP_FAILED) {
             // return SCE_KERNEL_ERROR_ENOMEM;
@@ -1192,11 +1192,11 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
         return MapAtOrAbove(reinterpret_cast<std::uintptr_t>(addr), len, prot, alignment);
 #endif
 #else
-        return mmap_aligned(len, prot, alignment, reinterpret_cast<std::uintptr_t>(addr));
+        return mmap_aligned(len, prot, alignment, commitGranule, reinterpret_cast<std::uintptr_t>(addr));
 #endif
     }
 #ifdef _WIN32
-    return mmap_aligned(len, prot, alignment);
+    return mmap_aligned(len, prot, alignment, commitGranule);
 #endif
 #if defined(__linux__) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
     if (ArenaAvailable()) {
@@ -1210,7 +1210,11 @@ void* MapPlaced(void* addr, size_t len, int prot, int flags, size_t alignment) {
         throw std::overflow_error("Aligned mapping size overflow");
     }
     const size_t allocLen = len + alignment;
+#ifdef _WIN32
+    void* result = mmap(nullptr, allocLen, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, 0);
+#else
     void* result = mmap(nullptr, allocLen, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
     if (result == MAP_FAILED) {
         // return SCE_KERNEL_ERROR_ENOMEM;
         throw std::system_error(errno, std::generic_category(), "Aligned mmap failed");
@@ -1280,8 +1284,8 @@ void RecordProtection(const void* addr, size_t len, int prot) {
     if (prot >= 0) g_protections.emplace(start, ProtectedRange{start + len, ReportedProtection(prot)});
 }
 
-void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment) {
-    void* mapped = MapPlaced(addr, len, prot, flags, alignment);
+void* MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment, size_t commitGranule = 0) {
+    void* mapped = MapPlaced(addr, len, prot, flags, alignment, commitGranule);
 #if defined(__linux__) || defined(__APPLE__)
     GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, len);
 #endif
@@ -1313,18 +1317,50 @@ bool Reserved(const void* addr, size_t len) {
 
 void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len) {
     RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len);
-    mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void* allocation, bool last) {
-        auto* pieceAddress = const_cast<void*>(piece);
+    // Registry ranges split on protection changes while a host allocation spans them: release one
+    // host allocation at a time so a partial reset never truncates it.
+    const void* pendingBase = nullptr;
+    std::size_t pendingBytes = 0;
+    const void* pendingAllocation = nullptr;
+    bool pendingArena = false;
+    bool pendingLast = false;
+    const auto flushPending = [&] {
+        if (pendingBase == nullptr) return;
+        auto* pieceAddress = const_cast<void*>(pendingBase);
         std::lock_guard lock(g_directLock);
-        EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
-#if defined(__linux__) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
-        Unmap(pieceAddress, pieceBytes);
+#if defined(__linux__)
+        Unmap(pieceAddress, pendingBytes);
 #else
-        if (KernelArena::Get().Contains(pieceAddress, pieceBytes)) munmap(pieceAddress, pieceBytes);
-        else if (last) munmap_release(const_cast<void*>(allocation));
-        else munmap(pieceAddress, pieceBytes);
+        if (pendingArena) munmap(pieceAddress, pendingBytes);
+        else if (pendingLast) munmap_release(const_cast<void*>(pendingAllocation));
+        else munmap(pieceAddress, pendingBytes);
 #endif
+        pendingBase = nullptr;
+        pendingBytes = 0;
+        pendingAllocation = nullptr;
+        pendingLast = false;
+    };
+    mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void* allocation, bool last) {
+        {
+            std::lock_guard lock(g_directLock);
+            EraseMappings(reinterpret_cast<std::uintptr_t>(piece), reinterpret_cast<std::uintptr_t>(piece) + pieceBytes);
+        }
+#if defined(_WIN32)
+        const bool arena = KernelArena::Get().Contains(piece, pieceBytes);
+#else
+        const bool arena = false;
+#endif
+        if (pendingBase != nullptr && (allocation != pendingAllocation || arena != pendingArena || last != pendingLast || reinterpret_cast<std::uintptr_t>(piece) != reinterpret_cast<std::uintptr_t>(pendingBase) + pendingBytes)) flushPending();
+        if (pendingBase == nullptr) {
+            pendingBase = piece;
+            pendingAllocation = allocation;
+            pendingArena = arena;
+            pendingLast = last;
+        }
+        pendingBytes += pieceBytes;
+        if (last) flushPending();
     });
+    flushPending();
     EraseReservations(addr, len);
     RecordProtection(addr, len, -1);
 }
@@ -1385,7 +1421,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     return 0;
 }
 
-static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, bool zero) {
+static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, bool zero, size_t commitGranule = 0) {
     GuestAllocations::Mutation mutation;
     if (exclusive && mutation.Overlaps(*addr, len)) return SCE_KERNEL_ERROR_ENOMEM;
     flags = PlaceHintInReservation(*addr, len, flags);
@@ -1397,9 +1433,9 @@ static int MapAnonymous(void** addr, size_t len, int prot, int flags, size_t ali
     }
     ReplaceFixedOverlap(mutation, *addr, len, flags);
 #ifdef _WIN32
-    void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment);
+    void* mapped = MapAligned(*addr, len, zero ? PROT_NONE : LinuxProtFromSce(prot), flags, alignment, commitGranule);
 #else
-    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
+    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment, commitGranule);
 #endif
     try {
 #ifdef _WIN32
@@ -1438,11 +1474,14 @@ int DoMapFlexibleAnon(void** addr, size_t len, int prot, int flags) {
 #endif
 }
 
-int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, [[maybe_unused]] bool allowStackReplacement) {
+int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bool exclusive, [[maybe_unused]] bool allowStackReplacement, size_t commitGranule) {
     ValidateOutput(addr);
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
 #ifdef _WIN32
-    if (allowStackReplacement && (flags & GuestMapFixedFlag) != 0 && !KernelArena::Get().Owns(*addr, len)) {
+        std::uintptr_t stackStart = 0;
+    std::uintptr_t stackEnd = 0;
+    const bool isStack = GuestThreadStack(reinterpret_cast<std::uintptr_t>(*addr), &stackStart, &stackEnd);
+    if (allowStackReplacement && (flags & GuestMapFixedFlag) != 0 && (isStack || !KernelArena::Get().Owns(*addr, len))) {
         constexpr int GuestMapNoOverwrite = 0x80;
         if ((prot & ~7) != 0 || (flags & ~(GuestMapFixedFlag | GuestMapNoOverwrite)) != 0)
             return SCE_KERNEL_ERROR_EINVAL;
@@ -1488,7 +1527,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags, size_t alignment, bo
         return result;
     }
 #endif
-    return MapAnonymous(addr, len, prot, flags, alignment, exclusive, false);
+    return MapAnonymous(addr, len, prot, flags, alignment, exclusive, false, commitGranule);
 }
 
 int DoMapZero(void** addr, size_t len, int prot, int flags) {
