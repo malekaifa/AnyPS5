@@ -1317,8 +1317,6 @@ bool Reserved(const void* addr, size_t len) {
 
 void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t len) {
     RequireResidentUnpinned(mutation, reinterpret_cast<std::uintptr_t>(addr), len);
-    // Registry ranges split on protection changes while a host allocation spans them: release one
-    // host allocation at a time so a partial reset never truncates it.
     const void* pendingBase = nullptr;
     std::size_t pendingBytes = 0;
     const void* pendingAllocation = nullptr;
@@ -1350,14 +1348,14 @@ void UnmapRegistered(GuestAllocations::Mutation& mutation, void* addr, size_t le
 #else
         const bool arena = false;
 #endif
-        if (pendingBase != nullptr && (allocation != pendingAllocation || arena != pendingArena || last != pendingLast || reinterpret_cast<std::uintptr_t>(piece) != reinterpret_cast<std::uintptr_t>(pendingBase) + pendingBytes)) flushPending();
+        if (pendingBase != nullptr && (allocation != pendingAllocation || arena != pendingArena || reinterpret_cast<std::uintptr_t>(piece) != reinterpret_cast<std::uintptr_t>(pendingBase) + pendingBytes)) flushPending();
         if (pendingBase == nullptr) {
             pendingBase = piece;
             pendingAllocation = allocation;
             pendingArena = arena;
-            pendingLast = last;
         }
         pendingBytes += pieceBytes;
+        pendingLast = last;
         if (last) flushPending();
     });
     flushPending();
