@@ -1,10 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
-#ifdef __linux__
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <cerrno>
-#include <atomic>
+#include <source_location>
 #include <cstdio>
+#ifdef __linux__
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <string>
@@ -60,7 +61,11 @@ static void ObserveUnmap(std::uintptr_t address, std::size_t bytes) {
 
 thread_local unsigned char threadLocalBlock[512 * 1024];
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "GuestPthreadStack failed at line %u\n", location.line());
+    std::abort();
+}
 
 static std::uintptr_t Descend(std::uintptr_t floor);
 static std::uintptr_t (*volatile descend)(std::uintptr_t) = Descend;
@@ -384,26 +389,48 @@ int main() {
     }
     {
         constexpr std::size_t page = 0x4000;
-        void* reservation = VirtualAlloc(nullptr, page * 3, MEM_RESERVE, PAGE_NOACCESS);
+        void* reservation = VirtualAlloc(nullptr, page * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         Require(reservation != nullptr);
         Require(!GuestArenaContains_nid_postfix(reservation, page * 3));
         auto* bytes = static_cast<unsigned char*>(reservation);
-        Require(mmap_nid_postfix(bytes, page * 3, 3, 0x1012, -1, 0) == bytes);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(bytes, page * 3, true, true, false);
+        }
         bytes[0] = 0x42;
         bytes[page * 2] = 0x84;
         Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes + page), page) == 0);
-        Require(bytes[0] == 0x42);
-        Require(bytes[page * 2] == 0x84);
         MEMORY_BASIC_INFORMATION info{};
         Require(VirtualQuery(bytes, &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT);
         Require(VirtualQuery(bytes + page, &info, sizeof(info)) == sizeof(info) && info.State == MEM_RESERVE);
         Require(VirtualQuery(bytes + page * 2, &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT);
-        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes), page) == 0);
+        Require(bytes[0] == 0x42);
         Require(bytes[page * 2] == 0x84);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes), page) == 0);
         Require(VirtualQuery(bytes, &info, sizeof(info)) == sizeof(info) && info.State == MEM_RESERVE);
         Require(VirtualQuery(bytes + page * 2, &info, sizeof(info)) == sizeof(info) && info.State == MEM_COMMIT);
+        Require(bytes[page * 2] == 0x84);
         Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes + page * 2), page) == 0);
         Require(VirtualQuery(bytes, &info, sizeof(info)) == sizeof(info) && info.State == MEM_FREE);
+    }
+    {
+        constexpr std::size_t page = 0x4000;
+        constexpr std::size_t count = page * 4;
+        auto* bytes = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(count, page));
+        Require(bytes != nullptr);
+        GuestArena::GuestArenaCommit_nid_postfix(bytes, count, PAGE_READWRITE, count);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(bytes, count, true, true, false);
+        }
+        Require(mprotect_nid_postfix(bytes + page, page, 1) == 0);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes), count) == 0);
+        {
+            GuestAllocations::Mutation mutation;
+            Require(!mutation.Overlaps(bytes, count));
+        }
+        MEMORY_BASIC_INFORMATION info{};
+        Require(VirtualQuery(bytes, &info, sizeof(info)) == sizeof(info) && info.State == MEM_RESERVE);
     }
 #endif
 }
