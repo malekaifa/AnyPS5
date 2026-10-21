@@ -366,5 +366,20 @@ int main() {
         Require(GetExitCodeThread(handle, &code) != 0 && code == 0);
         Require(CloseHandle(handle) != 0);
     }
+    {
+        constexpr std::size_t page = 0x4000;
+        void* reservation = nullptr;
+        Require(sceKernelReserveVirtualRange(&reservation, page * 3, 0, 0) == 0);
+        auto* bytes = static_cast<unsigned char*>(reservation);
+        Require(mmap_nid_postfix(bytes, page * 3, 3, 0x1012, -1, 0) == bytes);
+        bytes[0] = 0x42;
+        bytes[page * 2] = 0x84;
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes + page), page) == 0);
+        Require(bytes[0] == 0x42);
+        Require(bytes[page * 2] == 0x84);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes), page) == 0);
+        Require(bytes[page * 2] == 0x84);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(bytes + page * 2), page) == 0);
+    }
 #endif
 }
