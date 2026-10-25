@@ -324,9 +324,12 @@ def main(argv=None):
     if not os.path.exists(args.graph):
         print("full run: no test graph")
         return 0
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
-    changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
-    picked, full = select(graph, changed)
+    try:
+        graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
+        changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+        picked, full = select(graph, changed)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        parser.error(f"cannot read test selection inputs: {error}")
     if picked is None:
         print(f"full run: {', '.join(full[:5])}")
         return 0

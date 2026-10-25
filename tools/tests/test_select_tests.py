@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -349,6 +350,39 @@ class BuildErrorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("CMAKE_CACHEFILE_DIR", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_select_inputs_report_cleanly_and_clear_stale_selection(self):
+        class FakeBuild:
+            def __init__(self, path):
+                self.path = str(path)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            graph = root / "graph.json"
+            changed = root / "changed.txt"
+            changed.write_text("README.md\n", encoding="utf-8")
+            cases = [
+                ("{", changed),
+                ("[]", changed),
+                ("{}", changed),
+                ('{"tests": {}, "closures": {}}', root / "missing-changed.txt"),
+            ]
+            for contents, changed_path in cases:
+                with self.subTest(contents=contents, changed=changed_path.name):
+                    graph.write_text(contents, encoding="utf-8")
+                    for name in ("select.ninja", "select.tests"):
+                        (build / name).write_text("previous selection", encoding="utf-8")
+                    stderr = io.StringIO()
+                    with mock.patch.object(select_tests, "Build", FakeBuild), mock.patch.object(select_tests.sys, "stderr", stderr), \
+                            self.assertRaises(SystemExit) as raised:
+                        select_tests.main(["select", str(build), str(graph), str(changed_path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("cannot read test selection inputs", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertFalse((build / "select.ninja").exists())
+                    self.assertFalse((build / "select.tests").exists())
 
     def test_cache_with_utf8_bom_is_read(self):
         with tempfile.TemporaryDirectory() as directory:
