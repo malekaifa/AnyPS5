@@ -580,6 +580,48 @@ class ReleaseNotesTests(unittest.TestCase):
 
 
 class ReleaseNotesEdgeCaseTests(unittest.TestCase):
+    def test_cli_reports_invalid_generated_notes_without_traceback(self):
+        cases = [
+            ("{}", "must contain a body"),
+            ("[]", "must contain a body"),
+            ("null", "must contain a body"),
+            ('{"body": null}', "body must be a string"),
+            ("{bad", "Expecting property name"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source = directory / "source.json"
+            body, full = directory / "body.md", directory / "full.md"
+            for content, expected in cases:
+                with self.subTest(content=content):
+                    source.write_text(content, encoding="utf-8")
+                    body.write_bytes(b"previous body")
+                    full.write_bytes(b"previous full")
+                    result = subprocess.run(
+                        [sys.executable, str(Path(prepare_release_notes.__file__)),
+                         "--input", str(source), "--body", str(body), "--full", str(full)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(expected, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual((body.read_bytes(), full.read_bytes()), (b"previous body", b"previous full"))
+
+    def test_cli_reports_missing_input_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            result = subprocess.run(
+                [sys.executable, str(Path(prepare_release_notes.__file__)),
+                 "--input", str(directory / "missing.json"),
+                 "--body", str(directory / "body.md"), "--full", str(directory / "full.md")],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("missing.json", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_non_string_body_raises_value_error(self):
         source = json.dumps({"body": 123})
         with tempfile.TemporaryDirectory() as directory:

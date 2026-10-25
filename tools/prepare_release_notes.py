@@ -26,7 +26,10 @@ def prepare_notes(source, body, full):
         for second in paths[index + 1:]:
             if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
-    notes = json.loads(source.read_text(encoding="utf-8"))["body"]
+    response = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(response, dict) or "body" not in response:
+        raise ValueError("Generated release notes response must contain a body")
+    notes = response["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
     for destination in (body, full):
@@ -46,7 +49,10 @@ def main():
     parser.add_argument("--body", type=Path, required=True)
     parser.add_argument("--full", type=Path, required=True)
     args = parser.parse_args()
-    prepare_notes(args.input, args.body, args.full)
+    try:
+        prepare_notes(args.input, args.body, args.full)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":
