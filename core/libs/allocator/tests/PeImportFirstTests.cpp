@@ -144,6 +144,20 @@ int main() {
         auto truncated = image({"kernel32.dll", "mimalloc-redirect.dll", "ucrtbase.dll"});
         truncated.resize(SectionOffset + DescriptorBytes + DescriptorBytes / 2);
         failsWithoutTouchingTheFile(directory, "truncated-directory", truncated, "truncated import directory");
+        auto noDirectories = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(noDirectories, OptionalOffset + 108, 0);
+        failsWithoutTouchingTheFile(directory, "no-data-directories", noDirectories, "the image has no imports");
+        auto oneDirectory = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(oneDirectory, OptionalOffset + 108, 1);
+        failsWithoutTouchingTheFile(directory, "no-import-directory", oneDirectory, "the image has no imports");
+        auto shortOptional = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put16(shortOptional, PeOffset + 20, 112 + 8);
+        failsWithoutTouchingTheFile(directory, "short-optional-header", shortOptional, "the image has no imports");
+        auto unterminatedName = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        const auto secondNameRva = get32(unterminatedName, SectionOffset + DescriptorBytes + 12);
+        const auto secondNameOffset = SectionOffset + (secondNameRva - SectionRva);
+        unterminatedName.resize(secondNameOffset + std::string("mimalloc-redirect.dll").size());
+        failsWithoutTouchingTheFile(directory, "unterminated-import-name", unterminatedName, "unterminated import name");
         failsWithoutTouchingTheFile(directory, "pe32", image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x10b), "not a PE32+ image");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
