@@ -87,6 +87,11 @@ def blank(match):
     return re.sub(r"[^\n]", " ", match.group())
 
 
+def same_file(left, right):
+    left, right = Path(left), Path(right)
+    return left.resolve() == right.resolve() or (left.exists() and right.exists() and left.samefile(right))
+
+
 def code(text):
     return CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", ""))
 
@@ -486,6 +491,13 @@ def report(base, head):
 
 
 def write_site(output, libraries, shaders):
+    outputs = [output / name for name in (
+        "progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html",
+    )]
+    for index, first in enumerate(outputs):
+        for second in outputs[index + 1:]:
+            if same_file(first, second):
+                raise ValueError("generated progress reports must be distinct files")
     output.mkdir(parents=True, exist_ok=True)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
@@ -570,8 +582,8 @@ def main(argv=None):
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)
-            except OSError as error:
-                parser.error(f"{args.output}: {error.strerror or error}")
+            except (OSError, ValueError) as error:
+                parser.error(f"{args.output}: {getattr(error, 'strerror', None) or error}")
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:

@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -558,6 +559,23 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.run_main(["--root", directory, "--json"], libraries, shaders)
         self.assertEqual(progress.PRX, original)
+
+    def test_generated_reports_cannot_alias_each_other(self):
+        libraries, shaders = self.library_snapshot()
+        names = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+        for first_index, first_name in enumerate(names):
+            for second_name in names[first_index + 1:]:
+                with self.subTest(first=first_name, second=second_name), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory)
+                    paths = {name: output / name for name in names}
+                    for name, path in paths.items():
+                        path.write_bytes(("previous " + name).encode())
+                    paths[second_name].unlink()
+                    os.link(paths[first_name], paths[second_name])
+                    before = {name: path.read_bytes() for name, path in paths.items()}
+                    with self.assertRaisesRegex(ValueError, "distinct files"):
+                        progress.write_site(output, libraries, shaders)
+                    self.assertEqual({name: path.read_bytes() for name, path in paths.items()}, before)
 
     def test_compare_stays_a_report_of_two_snapshots(self):
         def snapshot(names):

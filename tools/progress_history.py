@@ -233,10 +233,13 @@ def main(argv=None):
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     args = parser.parse_args(argv)
     try:
+        outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
+        for index, first in enumerate(outputs):
+            for second in outputs[index + 1:]:
+                if progress.same_file(first, second):
+                    raise ValueError("generated history reports must be distinct files")
         if args.cache:
-            outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
-            if any(args.cache.resolve() == path.resolve() or
-                   (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
+            if any(progress.same_file(args.cache, path) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
         points = collect(args.ref, args.cache)
     except (OSError, ValueError) as error:

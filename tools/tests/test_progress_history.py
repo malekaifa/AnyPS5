@@ -167,6 +167,28 @@ class ProgressHistoryTests(unittest.TestCase):
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
 
+    def test_generated_reports_cannot_alias_each_other(self):
+        point = {"date": "2026-01-01", "commit": "abc1234",
+                 "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 3, "total": 4, "percent": 75.0}}
+        names = ("history.json", "history.svg", "history.html")
+        for first_index, first_name in enumerate(names):
+            for second_name in names[first_index + 1:]:
+                with self.subTest(first=first_name, second=second_name), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "site"
+                    output.mkdir()
+                    paths = {name: output / name for name in names}
+                    for name, path in paths.items():
+                        path.write_bytes(("previous " + name).encode())
+                    paths[second_name].unlink()
+                    os.link(paths[first_name], paths[second_name])
+                    before = {name: path.read_bytes() for name, path in paths.items()}
+                    with patch.object(progress_history, "collect", return_value=[point]), \
+                            self.assertRaises(SystemExit) as raised:
+                        progress_history.main([str(output)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertEqual({name: path.read_bytes() for name, path in paths.items()}, before)
+
 
 
 if __name__ == "__main__":
