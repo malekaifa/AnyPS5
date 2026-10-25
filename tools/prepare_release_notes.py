@@ -27,7 +27,10 @@ def prepare_notes(source, body, full):
         for second in paths[index + 1:]:
             if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
-    notes = json.loads(source.read_text(encoding="utf-8-sig"))["body"]
+    response = json.loads(source.read_text(encoding="utf-8-sig"))
+    if not isinstance(response, dict) or "body" not in response:
+        raise ValueError("Generated release notes response must contain a body")
+    notes = response["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
     for destination in (body, full):

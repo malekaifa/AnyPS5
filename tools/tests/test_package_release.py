@@ -631,6 +631,35 @@ class ReleaseNotesTests(unittest.TestCase):
 
 
 class ReleaseNotesEdgeCaseTests(unittest.TestCase):
+    def test_missing_or_non_object_response_raises_value_error(self):
+        for response in ({}, [], None):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                source_path = directory / "source.json"
+                source_path.write_text(json.dumps(response), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "must contain a body"):
+                    prepare_release_notes.prepare_notes(source_path, directory / "body.md", directory / "full.md")
+
+    def test_main_reports_missing_or_non_object_response_without_a_traceback(self):
+        for response in ({}, [], None):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                source_path = directory / "source.json"
+                body_path = directory / "body.md"
+                full_path = directory / "full.md"
+                source_path.write_text(json.dumps(response), encoding="utf-8")
+                body_path.write_bytes(b"previous body")
+                full_path.write_bytes(b"previous full")
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    prepare_release_notes.main(
+                        ["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("must contain a body", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertEqual((body_path.read_bytes(), full_path.read_bytes()),
+                                 (b"previous body", b"previous full"))
+
     def test_non_string_body_raises_value_error(self):
         source = json.dumps({"body": 123})
         with tempfile.TemporaryDirectory() as directory:
