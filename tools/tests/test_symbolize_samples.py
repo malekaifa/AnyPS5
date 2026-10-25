@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import struct
 import sys
 import tempfile
@@ -222,6 +223,55 @@ class SymbolizeSamplesTests(unittest.TestCase):
         lines, errors = self.run_main(later, "--since", earlier, "--libs", self.libs)
         self.assertIn("libSceAgcDriver.prx+0x1011", "\n".join(lines))
         self.assertIn("timestamp", errors)
+
+    def test_out_cannot_alias_either_input_file(self):
+        record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        for target_name in ("earlier", "later"):
+            for alias in ("same", "hardlink"):
+                with self.subTest(target=target_name, alias=alias):
+                    root = self.root / f"{target_name}-{alias}"
+                    root.mkdir()
+                    earlier = root / "early.collapsed.txt"
+                    later = root / "late.collapsed.txt"
+                    earlier.write_text(record + "libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+                    later.write_text(record + "libSceAgcDriver.prx+0x1011 2\n", encoding="utf-8")
+                    target = earlier if target_name == "earlier" else later
+                    out = target
+                    if alias == "hardlink":
+                        out = root / "out.collapsed.txt"
+                        os.link(target, out)
+                    before = (earlier.read_bytes(), later.read_bytes())
+                    errors = io.StringIO()
+                    with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                        symbolize_samples.main([str(later), "--since", str(earlier), "--libs", str(self.libs), "--out", str(out)])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn("--out must not overwrite an input sample file", errors.getvalue())
+                    self.assertEqual((earlier.read_bytes(), later.read_bytes()), before)
+
+    def test_out_cannot_alias_a_module_input_file(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        module = self.libs / "libSceAgcDriver.prx"
+        for alias in ("same", "hardlink"):
+            with self.subTest(alias=alias):
+                out = module
+                if alias == "hardlink":
+                    out = self.root / "module-output"
+                    os.link(module, out)
+                before = module.read_bytes()
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    symbolize_samples.main([str(samples), "--libs", str(self.libs), "--out", str(out)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--out must not overwrite a module input file", errors.getvalue())
+                self.assertEqual(module.read_bytes(), before)
+                if alias == "hardlink":
+                    out.unlink()
+
 
     def test_malformed_lines_are_rejected_with_their_line_number(self):
         bad = self.root / "bad.collapsed.txt"

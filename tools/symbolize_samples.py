@@ -243,6 +243,11 @@ def window(later, earlier):
     return result
 
 
+def same_file(left, right):
+    left, right = Path(left), Path(right)
+    return left.resolve() == right.resolve() or (left.exists() and right.exists() and left.samefile(right))
+
+
 def summarize(symbolizer, samples, top):
     self_counts = collections.Counter()
     inclusive = collections.Counter()
@@ -281,10 +286,14 @@ def main(argv=None):
     parser.add_argument("--thread", help="keep only this thread of an APS5_SAMPLE_THREADS file")
     parser.add_argument("--unverified", action="store_true", help="also symbolize modules the samples have no '# module' record for")
     args = parser.parse_args(argv)
+    if args.out and any(same_file(args.out, source) for source in (args.samples, args.since) if source):
+        parser.error("--out must not overwrite an input sample file")
     samples = load(args.samples, args.thread)
     if args.since:
         samples = window(samples, load(args.since, args.thread))
     symbolizer = Symbolizer(args.libs, samples.headers, args.demangle, warn=lambda text: print("warning: " + text, file=sys.stderr), unverified=args.unverified)
+    if args.out and any(same_file(args.out, path) for path in symbolizer.files.values()):
+        parser.error("--out must not overwrite a module input file")
     for line in summarize(symbolizer, samples, args.top):
         print(line)
     if args.out:
