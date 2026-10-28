@@ -27,6 +27,18 @@ def library_zip(entries):
     return buffer.getvalue()
 
 
+def excessive_json_value():
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        value = "[" * depth + "0" + "]" * depth
+        try:
+            json.loads(value)
+        except RecursionError:
+            return ("[" * (depth + 128) + "0" + "]" * (depth + 128)).encode()
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
+
+
 class LibraryPublicationTests(unittest.TestCase):
     def test_unicode_path_rewrite_is_rejected_before_decompression(self):
         original = "libs/../libc.prx"
@@ -234,6 +246,72 @@ class BuildWebCliTests(unittest.TestCase):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
+    def test_deeply_nested_release_json_is_cli_error_without_site_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            web = root / "web"
+            web.mkdir()
+            preserved = web / "keep.txt"
+            preserved.write_bytes(b"previous site")
+            errors, output = io.StringIO(), io.StringIO()
+            with patch.object(build_web, "request", return_value=io.BytesIO(excessive_json_value())), \
+                    contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
+                with self.assertRaises(SystemExit) as raised:
+                    build_web.main(["--build", str(root), "--release"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("Release metadata JSON is too deeply nested", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(preserved.read_bytes(), b"previous site")
+            self.assertEqual(list(root.iterdir()), [web])
+            self.assertEqual(list(web.iterdir()), [preserved])
+
+    def test_deeply_nested_web_release_json_is_cli_error_without_site_changes(self):
+        archive_data = io.BytesIO()
+        with zipfile.ZipFile(archive_data, "w") as archive:
+            for name in build_web.WEB_FILES:
+                archive.writestr(name, b"content")
+            archive.writestr("web-release.json", excessive_json_value())
+        web_release = archive_data.getvalue()
+        web_url = "https://example.invalid/web.zip"
+        release = {
+            "tag_name": "v1", "html_url": "https://example.invalid/v1",
+            "assets": [
+                {"name": "web-v1.zip", "size": len(web_release), "browser_download_url": web_url, "digest": None},
+                {"name": "prx-windows-v1.zip", "size": 1, "browser_download_url": "https://example.invalid/windows.zip", "digest": None},
+                {"name": "prx-linux-v1.zip", "size": 1, "browser_download_url": "https://example.invalid/linux.zip", "digest": None},
+            ],
+        }
+        responses = {
+            "https://api.github.com/repos/boykopovar/AnyPS5/releases/latest": json.dumps(release).encode(),
+            web_url: web_release,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            web = root / "web"
+            web.mkdir()
+            preserved = web / "keep.txt"
+            preserved.write_bytes(b"previous site")
+            errors, output = io.StringIO(), io.StringIO()
+            with patch.object(build_web, "request", side_effect=lambda url: io.BytesIO(responses[url])), \
+                    contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
+                with self.assertRaises(SystemExit) as raised:
+                    build_web.main(["--build", str(root), "--release"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("Web release metadata JSON is too deeply nested", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(preserved.read_bytes(), b"previous site")
+            self.assertEqual(list(root.iterdir()), [web])
+            self.assertEqual(list(web.iterdir()), [preserved])
+
+    def test_recursion_outside_release_json_decode_propagates(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(build_web, "request", return_value=io.BytesIO(b"{}")), \
+                patch.object(build_web, "release_metadata", side_effect=RecursionError("later recursion")):
+            with self.assertRaisesRegex(RecursionError, "later recursion"):
+                build_web.publish_release(Path(directory))
+
     def test_malformed_api_responses_are_cli_errors_without_site_changes(self):
         documents = ({}, [], None, {"tag_name": 1}, {"tag_name": "v1", "html_url": "url", "assets": None},
                      {"tag_name": "v1", "html_url": "url", "assets": [None]},
