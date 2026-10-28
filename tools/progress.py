@@ -89,6 +89,41 @@ def blank(match):
     return re.sub(r"[^\n]", " ", match.group())
 
 
+def case_insensitive_spelling(path):
+    path = Path(path)
+    alternate = path.with_name(path.name.swapcase())
+    if alternate.name == path.name:
+        return False
+    try:
+        if sum(entry.name.casefold() == path.name.casefold() for entry in path.parent.iterdir()) != 1:
+            return False
+        return os.path.samestat(os.lstat(path), os.lstat(alternate))
+    except OSError:
+        return False
+
+
+def same_file(left, right):
+    left, right = Path(left), Path(right)
+    left_path, right_path = os.path.abspath(left), os.path.abspath(right)
+    if left_path == right_path:
+        return True
+    try:
+        if left.samefile(right):
+            return True
+    except OSError:
+        pass
+    try:
+        left_resolved, right_resolved = str(left.resolve(strict=False)), str(right.resolve(strict=False))
+    except (OSError, RuntimeError):
+        return False
+    if left_resolved == right_resolved:
+        return True
+    if left_resolved.casefold() != right_resolved.casefold():
+        return False
+    return ((left.is_symlink() and case_insensitive_spelling(left)) or
+            (right.is_symlink() and case_insensitive_spelling(right)))
+
+
 def code(text):
     return CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", ""))
 
@@ -504,6 +539,13 @@ def report(base, head):
 
 
 def write_site(output, libraries, shaders):
+    outputs = [output / name for name in (
+        "progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html",
+    )]
+    for index, first in enumerate(outputs):
+        for second in outputs[index + 1:]:
+            if same_file(first, second):
+                raise ValueError("generated progress reports must be distinct files")
     output.mkdir(parents=True, exist_ok=True)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
@@ -592,8 +634,8 @@ def main(argv=None):
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)
-            except OSError as error:
-                parser.error(f"{args.output}: {error.strerror or error}")
+            except (OSError, ValueError) as error:
+                parser.error(f"{args.output}: {getattr(error, 'strerror', None) or error}")
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:

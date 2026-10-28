@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -627,6 +628,134 @@ class ProgressTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.run_main(["--root", directory, "--json"], libraries, shaders)
         self.assertEqual(progress.PRX, original)
+
+    def test_same_file_uses_filesystem_identity_without_case_folding(self):
+        with patch.object(Path, "samefile", return_value=False):
+            self.assertFalse(progress.same_file(Path("Report"), Path("report")))
+
+    def test_generated_reports_cannot_alias_each_other(self):
+        libraries, shaders = self.library_snapshot()
+        names = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+        for first_index, first_name in enumerate(names):
+            for second_name in names[first_index + 1:]:
+                with self.subTest(first=first_name, second=second_name), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory)
+                    paths = {name: output / name for name in names}
+                    for name, path in paths.items():
+                        path.write_bytes(("previous " + name).encode())
+                    paths[second_name].unlink()
+                    os.link(paths[first_name], paths[second_name])
+                    before = {name: path.read_bytes() for name, path in paths.items()}
+                    with self.assertRaisesRegex(ValueError, "distinct files"):
+                        progress.write_site(output, libraries, shaders)
+                    self.assertEqual({name: path.read_bytes() for name, path in paths.items()}, before)
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlinks")
+    def test_generated_reports_cannot_alias_dangling_symlinks(self):
+        libraries, shaders = self.library_snapshot()
+        for link_name, target_name in (("progress.json", "progress.html"), ("progress.html", "progress.json")):
+            with self.subTest(link=link_name, target=target_name), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                link = output / link_name
+                target = output / target_name
+                link.symlink_to(target_name)
+                self.assertFalse(target.exists())
+                with self.assertRaisesRegex(ValueError, "distinct files"):
+                    progress.write_site(output, libraries, shaders)
+                self.assertTrue(link.is_symlink())
+                self.assertFalse(target.exists())
+                self.assertEqual({path.name for path in output.iterdir()}, {link_name})
+
+    def test_case_insensitive_spelling_uses_directory_entry_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report"
+            path.write_text("report", encoding="utf-8")
+            stat = os.lstat(path)
+            with patch("os.lstat", return_value=stat):
+                self.assertTrue(progress.case_insensitive_spelling(path))
+            with patch("os.lstat", side_effect=(stat, FileNotFoundError())):
+                self.assertFalse(progress.case_insensitive_spelling(path))
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlink hardlinks")
+    def test_case_insensitive_spelling_does_not_conflate_two_case_distinct_entries(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            link = output / "progress.json"
+            alternate = output / "PROGRESS.JSON"
+            lower_target = output / "progress.html"
+            upper_target = output / "PROGRESS.HTML"
+            link.symlink_to(upper_target.name)
+            try:
+                os.link(link, alternate, follow_symlinks=False)
+            except OSError as error:
+                self.skipTest(f"case-distinct symlink hardlinks unavailable: {error}")
+            self.assertFalse(progress.case_insensitive_spelling(link))
+            self.assertFalse(progress.same_file(link, lower_target))
+            progress.write_site(output, libraries, shaders)
+            self.assertTrue(upper_target.exists())
+            self.assertTrue(lower_target.exists())
+            self.assertNotEqual(upper_target.read_text(encoding="utf-8"), lower_target.read_text(encoding="utf-8"))
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlinks")
+    def test_case_variant_dangling_targets_follow_filesystem_case_semantics(self):
+        libraries, shaders = self.library_snapshot()
+        for link_name, target_name in (("progress.json", "progress.html"), ("progress.html", "progress.json")):
+            with self.subTest(link=link_name, target=target_name), tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+                output = Path(directory)
+                link = output / link_name
+                target = output / target_name
+                link.symlink_to(target_name.upper())
+                self.assertFalse(target.exists())
+                case_insensitive = progress.case_insensitive_spelling(link)
+                self.assertEqual(progress.same_file(link, target), case_insensitive)
+                if case_insensitive:
+                    with self.assertRaisesRegex(ValueError, "distinct files"):
+                        progress.write_site(output, libraries, shaders)
+                    self.assertFalse(target.exists())
+                else:
+                    progress.write_site(output, libraries, shaders)
+                    self.assertTrue(target.exists())
+                self.assertTrue(link.is_symlink())
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlinks")
+    def test_generated_reports_cannot_alias_dangling_symlink_chains(self):
+        libraries, shaders = self.library_snapshot()
+        for link_name, target_name in (("progress.json", "progress.html"), ("progress.html", "progress.json")):
+            with self.subTest(link=link_name, target=target_name), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                link = output / link_name
+                bridge = output / "report-alias"
+                target = output / target_name
+                link.symlink_to(bridge.name)
+                bridge.symlink_to(target.name)
+                self.assertFalse(target.exists())
+                with self.assertRaisesRegex(ValueError, "distinct files"):
+                    progress.write_site(output, libraries, shaders)
+                self.assertTrue(link.is_symlink())
+                self.assertTrue(bridge.is_symlink())
+                self.assertFalse(target.exists())
+                self.assertEqual({path.name for path in output.iterdir()}, {link_name, bridge.name})
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlinks")
+    def test_generated_reports_follow_symlinked_directory_components(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "alias-dir").symlink_to(".", target_is_directory=True)
+            (output / "progress.json").symlink_to("alias-dir/progress.html")
+            with self.assertRaisesRegex(ValueError, "distinct files"):
+                progress.write_site(output, libraries, shaders)
+            self.assertFalse((output / "progress.html").exists())
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlinks")
+    def test_symlink_parent_changes_dotdot_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "inside/deep").mkdir(parents=True)
+            (output / "d").symlink_to("inside/deep", target_is_directory=True)
+            (output / "progress.json").symlink_to("d/../progress.html")
+            self.assertFalse(progress.same_file(output / "progress.json", output / "progress.html"))
 
     def test_compare_stays_a_report_of_two_snapshots(self):
         def snapshot(names):
