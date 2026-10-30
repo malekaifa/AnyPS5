@@ -1,6 +1,9 @@
 name: WASM relinker
 
 on:
+  push:
+    branches:
+      - test/wasm-relinker-ci-probe-20261030
   pull_request:
     paths:
       - .github/workflows/wasm-relinker.yml
@@ -13,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: wasm-relinker-${{ github.event.pull_request.number }}
+  group: wasm-relinker-probe-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
