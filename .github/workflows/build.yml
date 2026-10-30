@@ -527,7 +527,6 @@ jobs:
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
-          restore-keys: test-graph-${{ runner.os }}-
       - name: Select the tests the change reaches
         if: ${{ inputs.select }}
         env:
@@ -681,7 +680,6 @@ jobs:
         with:
           path: test-graph.json
           key: test-graph-${{ runner.os }}-${{ needs.eligibility.outputs.sha }}
-          restore-keys: test-graph-${{ runner.os }}-
       - name: Select the tests the change reaches
         if: ${{ inputs.select }}
         env:
