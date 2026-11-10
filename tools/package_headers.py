@@ -135,7 +135,7 @@ def package(root, output, version):
                 except OSError as error:
                     restore_error = restore_error or error
                     unrestored.append(name)
-            if restore_error is not None:
+            if unrestored or leftovers:
                 message = f"Could not restore public header release archives after {promotion_error}"
                 if unrestored:
                     preserve_staging = True
