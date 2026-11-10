@@ -143,6 +143,44 @@ class PublicHeaderPackageTests(unittest.TestCase):
                         self.assertFalse(path.exists())
                 self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
 
+    def test_transient_archive_removal_failure_does_not_report_rollback_failure(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+        original_unlink = Path.unlink
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {}
+            for name in names:
+                data = ("previous " + name).encode()
+                (output / name).write_bytes(data)
+                previous[name] = data
+
+            attempted = False
+
+            def replace(source, target):
+                if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                    raise OSError("second promotion failed")
+                return original_replace(source, target)
+
+            def unlink(path, missing_ok=False):
+                nonlocal attempted
+                if path == output / names[0] and not attempted:
+                    attempted = True
+                    raise PermissionError("transient promoted zip lock")
+                return original_unlink(path, missing_ok=missing_ok)
+
+            with patch.object(Path, "replace", replace), patch.object(Path, "unlink", unlink), self.assertRaisesRegex(
+                OSError, "second promotion failed"
+            ):
+                package_headers.package(self.source, output, "v1")
+
+            self.assertTrue(attempted)
+            for name in names:
+                self.assertEqual((output / name).read_bytes(), previous[name])
+            self.assertEqual({path.name for path in output.iterdir()}, set(names))
+
     def test_archive_restore_failure_preserves_unrestored_backup(self):
         names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
         original_replace = Path.replace
