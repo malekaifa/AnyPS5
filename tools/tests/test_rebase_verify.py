@@ -68,6 +68,35 @@ class RebaseVerifyTests(unittest.TestCase):
         problems = self.verify()
         self.assertTrue(any("a line is added that the branch did not add" in problem for problem in problems), problems)
 
+    def test_a_line_already_added_upstream_needs_no_second_addition(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.git("checkout", "-q", "main")
+        self.write("f.txt", "a\nshared\nb\nc\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the shared line upstream")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.assertEqual(self.verify(), [])
+
+    def test_an_extra_copy_of_a_line_already_added_upstream_is_reported(self):
+        self.git("checkout", "-q", "old")
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("f.txt", "a\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        self.git("checkout", "-q", "main")
+        self.write("f.txt", "a\nshared\nb\nc\n")
+        self.git("commit", "-q", "-am", "docs(tools): add the shared line upstream")
+        self.git("checkout", "-q", "new")
+        self.git("reset", "-q", "--hard", "main")
+        self.write("f.txt", "a\nshared\nshared\nbranch-only\nb\nc\n")
+        self.git("commit", "-q", "-am", "feat(tools): add shared lines")
+        problems = self.verify()
+        self.assertTrue(any("a line is added that the branch did not add" in problem and "shared" in problem for problem in problems), problems)
+
     def test_a_rebase_that_substitutes_a_different_deleted_line_is_reported(self):
         self.git("checkout", "-q", "old")
         self.git("reset", "-q", "--hard", self.base)

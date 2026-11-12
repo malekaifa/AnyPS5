@@ -79,8 +79,12 @@ def verify(root, old, new, onto):
         problems.append(f"the branch has {count_new} commits on {onto}, and had {count_old} on its old base")
     old_added, old_deleted = changed_lines(root, old_base, old)
     new_added, new_deleted = changed_lines(root, new_base, new)
-    problems += differences(old_added, new_added)
-    upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_deleted else ({}, {})
+    upstream_added, upstream_deleted = changed_lines(root, old_base, new_base) if old_added or old_deleted else ({}, {})
+    expected_added = {
+        path: lines - (upstream_added.get(path, collections.Counter()) - upstream_deleted.get(path, collections.Counter()))
+        for path, lines in old_added.items()
+    }
+    problems += differences(expected_added, new_added)
     expected_deleted = {
         path: lines - (upstream_deleted.get(path, collections.Counter()) - upstream_added.get(path, collections.Counter()))
         for path, lines in old_deleted.items()
