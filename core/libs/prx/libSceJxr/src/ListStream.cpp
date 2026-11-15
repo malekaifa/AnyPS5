@@ -133,7 +133,9 @@ std::int64_t APS5_VABI SetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_
 std::int64_t APS5_VABI GetPosWS_List_nid_postfix(Jxr::Stream* stream, std::size_t* position) {
     auto& state = State(stream, __func__);
     if (!position) throw std::invalid_argument("GetPosWS_List requires an output");
-    *position = state[Position] + PacketLength * state[Packets];
+    const std::size_t value = state[Position] + PacketLength * state[Packets];
+    if (!GuestCopyOut_nid_no_patch(position, &value, sizeof(value)))
+        throw std::invalid_argument("GetPosWS_List requires a writable output");
     return Success;
 }
 
