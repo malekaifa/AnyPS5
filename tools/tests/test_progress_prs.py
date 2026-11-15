@@ -117,12 +117,15 @@ class OpenPrProgressTests(unittest.TestCase):
     def test_dependency_cycle_is_reported(self):
         first = self.branch(1, {"first": "1"})
         second = self.branch(2, {"second": "2"})
+        third = self.branch(3, {"first": "3"})
         first["depends"] = {2}
         second["depends"] = {1}
-        order, excluded = progress_prs.dependency_order({1: first, 2: second}, self.root, self.base,
-                                                        "boykopovar/AnyPS5")
-        self.assertEqual(order, [])
-        self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle"})
+        third["depends"] = {1}
+        combined, included, excluded = progress_prs.integrate_pull_requests(
+            self.root, {1: first, 2: second, 3: third}, self.base, "boykopovar/AnyPS5")
+        self.assertEqual(combined, self.base)
+        self.assertEqual(included, set())
+        self.assertEqual(excluded, {1: "dependency_cycle", 2: "dependency_cycle", 3: "dependency_excluded"})
 
     def test_unavailable_estimate_keeps_failure_reason(self):
         with patch.object(progress_prs, "collect_open_prs", side_effect=RuntimeError("API unavailable")):

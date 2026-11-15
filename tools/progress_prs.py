@@ -85,9 +85,25 @@ def dependency_order(pull_requests, root, base_sha, repo):
     while pending:
         ready = sorted(number for number in pending if dependencies[number] <= (set(order) | excluded.keys()))
         if not ready:
+            cyclic = set()
             for number in pending:
+                frontier = list(dependencies[number] & pending)
+                seen = set()
+                while frontier:
+                    dependency = frontier.pop()
+                    if dependency == number:
+                        cyclic.add(number)
+                        break
+                    if dependency in seen:
+                        continue
+                    seen.add(dependency)
+                    frontier.extend(dependencies[dependency] & pending)
+            if not cyclic:
+                cyclic = set(pending)
+            for number in cyclic:
                 excluded[number] = "dependency_cycle"
-            break
+                pending.remove(number)
+            continue
         number = ready[0]
         pending.remove(number)
         order.append(number)
