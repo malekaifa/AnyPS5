@@ -45,8 +45,30 @@ static bool SameBits(long double left, long double right) { return std::memcmp(&
 static void CheckRoundingAndScaling() {
     Require(copysignl_nid_postfix(3.0L, -1.0L) == -3.0L && copysignl_nid_postfix(-3.0L, 0.0L) == 3.0L);
     Require(std::signbit(copysignl_nid_postfix(0.0L, -0.0L)) && !std::signbit(copysignl_nid_postfix(-0.0L, 2.0L)));
-    Require(sqrtl_nid_postfix(6.25L) == 2.5L && std::isnan(sqrtl_nid_postfix(-1.0L)));
-    Require(sqrtl_nid_postfix(-0.0L) == 0.0L && std::signbit(sqrtl_nid_postfix(-0.0L)));
+    fexcept_t savedFlags{};
+    Require(std::fegetexceptflag(&savedFlags, FE_ALL_EXCEPT) == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    const long double negativeRoot = sqrtl_nid_postfix(-2.0L);
+    const int negativeFlags = std::fetestexcept(FE_ALL_EXCEPT);
+    Require(std::isnan(negativeRoot) && (negativeFlags & FE_INVALID) != 0);
+
+    std::feclearexcept(FE_ALL_EXCEPT);
+    const long double inexactRoot = sqrtl_nid_postfix(2.0L);
+    const int inexactFlags = std::fetestexcept(FE_ALL_EXCEPT);
+    Require(inexactRoot > 1.4L && inexactRoot < 1.5L);
+    Require((inexactFlags & FE_INEXACT) != 0 && (inexactFlags & FE_INVALID) == 0);
+
+    std::feclearexcept(FE_ALL_EXCEPT);
+    const long double exactRoot = sqrtl_nid_postfix(6.25L);
+    const int exactFlags = std::fetestexcept(FE_ALL_EXCEPT);
+    Require(exactRoot == 2.5L && (exactFlags & (FE_INVALID | FE_INEXACT)) == 0);
+
+    std::feclearexcept(FE_ALL_EXCEPT);
+    const long double negativeZeroRoot = sqrtl_nid_postfix(-0.0L);
+    const int negativeZeroFlags = std::fetestexcept(FE_ALL_EXCEPT);
+    Require(negativeZeroRoot == 0.0L && std::signbit(negativeZeroRoot));
+    Require((negativeZeroFlags & FE_INVALID) == 0);
+    Require(std::fesetexceptflag(&savedFlags, FE_ALL_EXCEPT) == 0);
 
     const int saved = std::fegetround();
     const struct {
