@@ -803,6 +803,7 @@ long long APS5_VABI llrintl_nid_postfix(long double x) {
 }
 
 long double APS5_VABI sqrtl_nid_postfix(long double x) {
+    if (x < 0.0L) std::feraiseexcept(FE_INVALID);
     return std::sqrt(x);
 }
 
