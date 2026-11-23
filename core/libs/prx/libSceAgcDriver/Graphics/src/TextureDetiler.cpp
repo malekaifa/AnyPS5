@@ -180,7 +180,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         values[2] = 2u;
         std::copy(equation->bits.begin(), equation->bits.end(), values.begin() + 4);
     }
-    const bool words = elementBytes < 4u && (image ? retile && values[2] != 2u : !retile || values[2] != 2u);
+    const bool words = elementBytes < 4u && image && retile && values[2] != 2u;
     auto& shader = image ? (words ? imageWordModule : imageModule) : (words ? wordModule : module);
     if (shader == VK_NULL_HANDLE) {
         if (!image) shader = CreateShaderModule(context, TEXTURE_DETILE_WORDS_SPV, sizeof(TEXTURE_DETILE_WORDS_SPV), "vkCreateShaderModule detile words");
