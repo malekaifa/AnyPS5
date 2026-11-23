@@ -7364,16 +7364,20 @@ void ShaderResources::writeDrawSets(DrawBindings& result, std::span<const std::s
             const auto offset = static_cast<std::size_t>(write.pBufferInfo - descriptorBuffers.data());
             write.pBufferInfo = buffers.data() + offset;
             for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
-                const auto boundIndex = inPlaceIndices[binding.allocations[element]];
+                const auto allocation = binding.allocations[element];
+                const bool wholeDwords = !allocations[allocation].writeOnly;
+                const auto boundIndex = inPlaceIndices[allocation];
                 if (boundIndex != result.inPlace.size()) {
                     const auto& bound = result.inPlace[boundIndex];
-                    buffers[offset + element] = wholeDwordRange({bound.buffer, bound.offset, bound.bytes});
+                    const VkDescriptorBufferInfo info{bound.buffer, bound.offset, bound.bytes};
+                    buffers[offset + element] = wholeDwords ? wholeDwordRange(info) : info;
                     continue;
                 }
-                const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
+                const auto snapshotIndex = snapshotIndices[allocation];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result.snapshots[snapshotIndex];
-                buffers[offset + element] = wholeDwordRange({snapshot.buffer != nullptr ? snapshot.buffer->Handle() : snapshot.handle, snapshot.offset, snapshot.bytes});
+                const VkDescriptorBufferInfo info{snapshot.buffer != nullptr ? snapshot.buffer->Handle() : snapshot.handle, snapshot.offset, snapshot.bytes};
+                buffers[offset + element] = wholeDwords ? wholeDwordRange(info) : info;
             }
         }
     }
