@@ -149,11 +149,6 @@ struct MeshBarrierOps {
 
 MeshBarrierOps recompileMeshBarrier(bool software) {
     using namespace ShaderRecompiler;
-    const std::array<std::uint32_t, 11> code{
-        0x7e000280u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0x7e080280u,
-        0xbf8a0000u,
-        0xf80000cfu, 0x03020100u, 0xf80008d4u, 0x00040000u, 0xbf810000u
-    };
     const std::array<std::uint32_t, 8> hidden{};
     static constexpr std::array<std::uint32_t, 8> capabilities{
         spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64,
@@ -164,12 +159,12 @@ MeshBarrierOps recompileMeshBarrier(bool software) {
         "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"
     };
     RecompileRequest request{};
-    request.shader = {ShaderStage::Mesh, 0x26267000u, code, 0, {}};
+    request.shader = {ShaderStage::Mesh, 0x26267000u, BranchedLdsStep, 0, {}};
     request.context.waveSize = 64u;
     request.context.userData = hidden;
     request.context.vertex = ShaderVertexStageInfo{};
     request.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u);
-    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}};
+    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 128u, 1024u, 0u, 4u}, std::nullopt, {}};
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010400u;
     request.target.subgroupSize = 64u;
