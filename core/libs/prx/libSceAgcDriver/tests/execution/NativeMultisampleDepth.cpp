@@ -5106,6 +5106,21 @@ int main(int argc, char** argv) {
         if (argc == 1) CheckDepthAttachmentAlias();
         if (argc == 1) CheckStorageAliasRetirement();
         std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
+        const auto argument = argc == 2 ? std::string_view(argv[1]) : std::string_view{};
+        const bool needsHostImport = argc == 1 || argument == "--clears" || argument == "--buffer-clear";
+        if (needsHostImport && context.hostImportAlignment != 0u) {
+            constexpr std::size_t ProbeBytes = 65536u;
+            TargetMemory probe(ProbeBytes);
+            GuestBufferMemory buffer(context);
+            buffer.AddWritable(probe.Address(), ProbeBytes);
+            buffer.Upload(false);
+            const bool imported = HostImportCovers(context, probe.Address(), ProbeBytes);
+            buffer.WriteBack();
+            if (!imported) {
+                std::puts("skipped, host imports are unavailable");
+                return VulkanTestSkipped;
+            }
+        }
         Require(DepthSupported(context, VK_FORMAT_D32_SFLOAT, 4u), "the native depth regression requires sampled D32 with four samples");
         if (argc == 2 && std::string_view(argv[1]) == "--clear-refusals") {
             for (const auto& [fault, expected] : std::array{
