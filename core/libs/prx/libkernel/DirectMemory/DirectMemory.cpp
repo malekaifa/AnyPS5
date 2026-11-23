@@ -1746,8 +1746,27 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     auto bytes = static_cast<std::size_t>(end - first);
     const void* pointer = reinterpret_cast<const void*>(first);
     const auto nativeProtection = LinuxProtFromSce(prot);
+#ifdef _WIN32
+    if (const auto hostRanges = GuestThreadStackHostRanges(address, address + len); !hostRanges.empty()) {
+        for (const auto& [low, high] : hostRanges)
+            if (requireMappedStart && low <= address && address < high) return SCE_KERNEL_ERROR_EINVAL;
+        const auto requestedEnd = address + len;
+        auto cursor = address;
+        for (const auto& [low, high] : hostRanges) {
+            const auto partEnd = std::min(low, requestedEnd);
+            if (cursor < partEnd) {
+                if (const int result = DoMprotect(reinterpret_cast<const void*>(cursor), partEnd - cursor, prot, requireMappedStart && cursor == address); result != 0) return result;
+            }
+            cursor = std::max(cursor, high);
+        }
+        if (cursor < requestedEnd)
+            return DoMprotect(reinterpret_cast<const void*>(cursor), requestedEnd - cursor, prot, requireMappedStart && cursor == address);
+        return 0;
+    }
+#else
     if (GuestThreadStackHostRangeOverlaps(address, address + len))
         throw std::system_error(EACCES, std::generic_category(), "mprotect overlaps host-only guest thread stack pages");
+#endif
     std::uintptr_t stackStart = 0;
     std::uintptr_t stackEnd = 0;
     if ((prot & GuestProtGpuReadWrite) == 0 && GuestThreadStack(address, &stackStart, &stackEnd) && address >= stackStart && address + len <= stackEnd) {

@@ -193,6 +193,7 @@ struct PthreadPrivate {
 };
 
 bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end);
+std::vector<std::pair<std::uintptr_t, std::uintptr_t>> GuestThreadStackHostRanges(std::uintptr_t start, std::uintptr_t end);
 bool GuestThreadStackHostRangeOverlaps(std::uintptr_t start, std::uintptr_t end);
 void NoteGuestStackProtection(std::uintptr_t start, std::size_t bytes, bool readWrite);
 #ifdef _WIN32
