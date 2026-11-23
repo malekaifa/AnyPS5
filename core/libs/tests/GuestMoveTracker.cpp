@@ -27,6 +27,13 @@ void CheckInitValidation() {
 
 int main() {
     CheckInitValidation();
+
+    errno = 71;
+    Require(sceMoveTrackerGetVersion() == 2);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceMoveTrackerRecordStop() == 0);
+    Require(errno == 71);
     std::array<std::uint32_t, 2> total{kFill, kFill};
     std::array<std::uint32_t, 2> processing{kFill, kFill};
 
