@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_SUBGROUPBARRIER_HPP
 
 #include <vulkan/vulkan.h>
+#include <cstdint>
 
 namespace AgcDriver {
 
