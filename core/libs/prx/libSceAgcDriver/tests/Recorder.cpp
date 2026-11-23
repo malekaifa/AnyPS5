@@ -10698,7 +10698,10 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
         while (StorageTexture::AnyLiveOverlaps(reused)) {
             Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": an earlier case's image is still in the live registry over the reused memory, so this image would store whole");
             recorder.Reap();
-            std::this_thread::yield();
+            GpuMutex().unlock();
+            const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+            while (std::chrono::steady_clock::now() < until) std::this_thread::yield();
+            GpuMutex().lock();
         }
         {
             auto image = StorageTexture::Create(context, detiler, resource, 0);
