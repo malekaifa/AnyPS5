@@ -367,8 +367,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto context = device->graphicsContext();
-        if (!context.textureCompressionBC || !context.imageViewMinLod || !TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
-            std::puts("skipped, the device has no BC texture compression, VK_EXT_image_view_min_lod or shaderResourceMinLod");
+        if (!context.textureCompressionBC || (!context.imageViewMinLod && !context.shaderImageMinLod) || !TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
+            std::puts("skipped, the device has no BC texture compression or usable minimum LOD clamp");
             return VulkanTestSkipped;
         }
         if (!TargetHasCapability(device->Target(), spv::CapabilityMinLod)) {
