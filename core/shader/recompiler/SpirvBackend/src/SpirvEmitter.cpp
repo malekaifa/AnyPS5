@@ -284,6 +284,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.float32FlushToZero = target.float32FlushToZero;
     state.waveLdsMemoryBarriers = target.waveLdsMemoryBarriers;
     state.float32DenormPreserve = target.float32DenormPreserve;
+    state.fmaFloat32 = target.fmaFloat32;
     state.fusedExactArithmetic = target.fusedExactArithmetic;
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;

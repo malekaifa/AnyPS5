@@ -120,6 +120,7 @@ struct SpirvEmitterState {
     bool exactRobustLoads = false;
     bool float32FlushToZero = false;
     bool float32DenormPreserve = false;
+    bool fmaFloat32 = false;
     bool fusedExactArithmetic = false;
     bool meshBarycentricPixel = false;
     bool meshBarycentricVertex = false;
