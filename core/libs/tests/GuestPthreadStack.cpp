@@ -16,6 +16,8 @@
 #endif
 #ifdef _WIN32
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -391,7 +393,7 @@ int main() {
         constexpr std::size_t page = 0x4000;
         void* reservation = VirtualAlloc(nullptr, page * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         Require(reservation != nullptr);
-        Require(!GuestArenaContains_nid_postfix(reservation, page * 3));
+        Require(!GuestArena::GuestArenaContains_nid_postfix(reservation, page * 3));
         auto* bytes = static_cast<unsigned char*>(reservation);
         {
             GuestAllocations::Mutation mutation;
