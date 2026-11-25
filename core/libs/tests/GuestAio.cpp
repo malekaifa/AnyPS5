@@ -184,6 +184,20 @@ int main(int argc, char** argv) {
         Check(submit(unreadable, 0, 1, &untouchedId) == SCE_KERNEL_ERROR_EINVAL && untouchedId == -1);
         Check(submit(unreadable, 1, 1, &untouchedId) == SCE_KERNEL_ERROR_EFAULT && untouchedId == -1);
     }
+    const int randomWriteFd = sceKernelOpen("/dev/urandom", SCE_KERNEL_O_WRONLY, 0);
+    Check(randomWriteFd >= 0);
+    char randomWriteBuffer = 'r';
+    KernelAioResult randomWriteResult{-1, 0};
+    KernelAioRwRequest randomWriteRequest{0, 1, &randomWriteBuffer, &randomWriteResult, randomWriteFd};
+    std::int32_t randomWriteId = 77;
+    bool randomWriteThrew = false;
+    try {
+        sceKernelAioSubmitWriteCommands(&randomWriteRequest, 1, 1, &randomWriteId);
+    } catch (const std::runtime_error&) {
+        randomWriteThrew = true;
+    }
+    Check(randomWriteThrew && randomWriteId == 77);
+    Check(sceKernelClose(randomWriteFd) == 0);
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
     Check(fd >= 0);
     std::array<char, 16> first{};

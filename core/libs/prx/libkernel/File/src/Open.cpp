@@ -406,8 +406,7 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (copy.empty()) return File::KernelFileResult(savedErrno, SCE_KERNEL_ERROR_ENOENT);
     APS5_LOG_OUT("path=%s flags=0x%X nativeFlags=0x%X mode=0%o", path, flags, MapFlags(flags), mode);
     if (path != nullptr && File::IsRandomDevicePath(path)) {
-        if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY) throw std::runtime_error(std::string(__func__) + ": writing to " + path + " is not implemented");
-        const int fd = File::OpenRandomDevice();
+        const int fd = File::OpenRandomDevice(flags & SCE_KERNEL_O_ACCMODE);
         if (fd < 0) return File::KernelFileResult(savedErrno, SceErrorFromErrno(errno));
         File::RememberDescriptor(fd, flags);
         return File::KernelFileResult(savedErrno, fd);
@@ -461,6 +460,7 @@ static std::int64_t KernelRead(int d, void* buf, std::size_t nbytes) {
         const auto n = GuestSockets::Read(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
     }
+    if (File::IsRandomDevice(d) && !File::GrantsAccess(d, false)) return SceIoErrorFromErrno(EBADF);
     if (buf == nullptr) {
         if (nbytes != 0) return SceIoErrorFromErrno(DescriptorIsOpen_nid_no_patch(d) ? EFAULT : EBADF);
         char empty = 0;
@@ -485,6 +485,10 @@ static std::int64_t KernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (GuestSockets::IsOpen(d)) {
         const auto n = GuestSockets::Write(d, buf, nbytes);
         return n < 0 ? SceKernelError(*__error_nid_postfix()) : n;
+    }
+    if (File::IsRandomDevice(d)) {
+        const auto result = File::WriteRandomDevice(d, buf, nbytes);
+        return result < 0 ? SceIoErrorFromErrno(errno) : result;
     }
     if (buf == nullptr) {
         if (nbytes != 0) return SceIoErrorFromErrno(DescriptorIsOpen_nid_no_patch(d) ? EFAULT : EBADF);

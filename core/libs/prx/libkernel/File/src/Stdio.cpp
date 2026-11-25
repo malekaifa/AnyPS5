@@ -608,6 +608,7 @@ static bool IsSeekableDescriptor(int descriptor) {
 
 static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, std::int64_t offset) {
     if (IsKqueueDescriptor_nid_no_patch(descriptor)) return GUEST_ESPIPE;
+    if (File::IsRandomDevice(descriptor) && !File::GrantsAccess(descriptor, write)) return GUEST_EBADF;
     if (!nullBuffer && offset >= 0) return 0;
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
@@ -1414,6 +1415,10 @@ std::int64_t PosixPwrite_nid_no_patch(int d, const void* buf, std::size_t nbytes
     if (const int error = PositionedArgumentError(d, true, buf == nullptr && nbytes != 0, offset)) return PosixFailure(error);
     if (FailPosixPositionedGuestSocket(d)) return -1;
     const File::WriteSync sync(d);
+    if (File::IsRandomDevice(d)) {
+        const auto result = File::WriteRandomDevice(d, buf, nbytes);
+        return result < 0 ? PosixFailure(errno) : result;
+    }
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     char empty = 0;
     const auto result = NativePwrite(d, buf == nullptr ? &empty : buf, nbytes, offset);
@@ -1852,10 +1857,22 @@ static int CopyIovecs(const KernelIovec* iov, int iovcnt, std::vector<KernelIove
 }
 
 static std::int64_t ReadRandomIovecs(int d, const KernelIovec* iov, int iovcnt) {
+    if (!File::GrantsAccess(d, false)) return SceErrorFromErrno(GUEST_EBADF);
     std::int64_t total = 0;
     for (int i = 0; i < iovcnt; ++i) {
         File::ReadRandomDevice(d, iov[i].base, iov[i].length);
         total += static_cast<std::int64_t>(iov[i].length);
+    }
+    return total;
+}
+
+static std::int64_t WriteRandomIovecs(int d, const KernelIovec* iov, int iovcnt) {
+    if (!File::GrantsAccess(d, true)) return SceErrorFromErrno(GUEST_EBADF);
+    std::int64_t total = 0;
+    for (int i = 0; i < iovcnt; ++i) {
+        const auto result = File::WriteRandomDevice(d, iov[i].base, iov[i].length);
+        if (result < 0) return SceErrorFromErrno(errno);
+        total += result;
     }
     return total;
 }
@@ -1896,6 +1913,10 @@ static int64_t KernelPwrite(int d, const void* buf, size_t nbytes, int64_t offse
     if (const int error = PositionedArgumentError(d, true, buf == nullptr && nbytes != 0, offset)) return SceErrorFromErrno(error);
     if (const auto error = PositionedGuestSocketError(d); error != 0) return error;
     const File::WriteSync sync(d);
+    if (File::IsRandomDevice(d)) {
+        const auto result = File::WriteRandomDevice(d, buf, nbytes);
+        return result < 0 ? SceErrorFromErrno(errno) : result;
+    }
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     char empty = 0;
     const auto result = NativePwrite(d, nbytes == 0 && buf == nullptr ? &empty : buf, nbytes, offset);
@@ -1907,6 +1928,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     std::vector<KernelIovec> vectors;
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
+    if (offset == nullptr && File::IsRandomDevice(d) && !File::GrantsAccess(d, write)) return SceErrorFromErrno(GUEST_EBADF);
     if (offset != nullptr) {
         if (const int error = PositionedArgumentError(d, write, false, *offset)) return SceErrorFromErrno(error);
     }
@@ -1929,7 +1951,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     }
     const File::WriteSync sync(write ? d : -1);
     if (write) PrepareWriteIovecs(iov, iovcnt);
-    if (!write && File::IsRandomDevice(d)) return ReadRandomIovecs(d, iov, iovcnt);
+    if (File::IsRandomDevice(d)) return write ? WriteRandomIovecs(d, iov, iovcnt) : ReadRandomIovecs(d, iov, iovcnt);
     if (!write) {
         if (const auto archived = File::ReadArchivedIovecs(d, iov, iovcnt, offset)) return *archived < 0 ? SceErrorFromErrno(static_cast<int>(-*archived)) : *archived;
     }
@@ -2010,6 +2032,10 @@ static int64_t KernelPwrite(int d, const void* buf, size_t nbytes, int64_t offse
     if (const int error = PositionedArgumentError(d, true, buf == nullptr && nbytes != 0, offset)) return SceErrorFromErrno(error);
     if (const auto error = PositionedGuestSocketError(d); error != 0) return error;
     const File::WriteSync sync(d);
+    if (File::IsRandomDevice(d)) {
+        const auto result = File::WriteRandomDevice(d, buf, nbytes);
+        return result < 0 ? SceErrorFromErrno(errno) : result;
+    }
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buf, nbytes);
     const auto result = NativePwrite(d, buf, nbytes, offset);
     return result < 0 ? SceErrorFromErrno(errno) : result;
@@ -2031,6 +2057,7 @@ static int64_t KernelReadv(int d, const KernelIovec* guestIov, int iovcnt) {
     if (const int error = CopyIovecs(guestIov, iovcnt, vectors)) return error;
     const auto* iov = vectors.data();
     if (IsKqueueDescriptor_nid_no_patch(d)) return KqueueIovecsResult(iov, iovcnt, false);
+    if (File::IsRandomDevice(d) && !File::GrantsAccess(d, false)) return SceErrorFromErrno(GUEST_EBADF);
     std::deque<GuestArena::HostWrite> destinations;
     if (!OpenIovecs(iov, iovcnt, destinations)) return SceErrorFromErrno(GUEST_EFAULT);
     if (GuestSockets::IsOpen(d)) {
@@ -2059,6 +2086,7 @@ static int64_t KernelWritev(int d, const KernelIovec* guestIov, int iovcnt) {
     }
     const File::WriteSync sync(d);
     PrepareWriteIovecs(iov, iovcnt);
+    if (File::IsRandomDevice(d)) return WriteRandomIovecs(d, iov, iovcnt);
     const auto sharedResult = File::WritevSharedMemory_nid_no_patch(d, NativeIovecs(iov), iovcnt);
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__
@@ -2097,6 +2125,7 @@ static int64_t KernelPwritev(int d, const KernelIovec* guestIov, int iovcnt, int
     if (const auto error = PositionedGuestSocketError(d); error != 0) return error;
     const File::WriteSync sync(d);
     PrepareWriteIovecs(iov, iovcnt);
+    if (File::IsRandomDevice(d)) return WriteRandomIovecs(d, iov, iovcnt);
     const auto sharedResult = File::PwritevSharedMemory_nid_no_patch(d, NativeIovecs(iov), iovcnt, offset);
     if (sharedResult != -2) return sharedResult < 0 ? SceErrorFromErrno(errno) : sharedResult;
 #ifdef __APPLE__

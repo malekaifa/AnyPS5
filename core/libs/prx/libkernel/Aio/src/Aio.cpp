@@ -15,6 +15,7 @@
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 
@@ -239,6 +240,9 @@ int SubmitCommands(const KernelAioRwRequest* req, std::int32_t size, std::int32_
         const bool writable = guard.Open() && GuestWritable_nid_no_patch(id, idBytes);
         errno = savedErrno;
         if (!writable) return SCE_KERNEL_ERROR_EFAULT;
+    }
+    for (std::int32_t i = 0; i < size; ++i) {
+        if (write && File::IsRandomDevice(requests[i].fd)) NotImplemented_nid_no_patch("sceKernelAioSubmitWriteCommands: random device");
     }
     Reservation reservation(count);
     for (std::int32_t i = 0; i < size; ++i) RunRequest(requests[i], write);
