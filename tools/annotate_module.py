@@ -198,12 +198,15 @@ class Module:
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
-        last = max((self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0] for index in range(buckets)), default=0)
+        last = 0
+        for index in range(buckets):
+            bucket = self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0]
+            if bucket != 0 and bucket < symoffset:
+                raise ModuleError("GNU hash bucket index %d is below first symbol %d" % (bucket, symoffset))
+            last = max(last, bucket)
         if last == 0:
             referenced = max((info >> 32 for _, info, _ in self.relocations()), default=0)
             return max(symoffset, referenced + 1)
-        if last < symoffset:
-            return symoffset
         while not self.unpack("<I", self.address(chains_at + 4 * (last - symoffset), 4))[0] & 1:
             last += 1
         return last + 1

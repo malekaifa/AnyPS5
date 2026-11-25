@@ -332,6 +332,17 @@ class ImportRelocationTests(unittest.TestCase):
                 module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu", bloom_count=bloom_count))
                 self.assertEqual(module.symbol_count, len(DEFAULT_SYMBOLS) + 1)
 
+    def test_gnu_hash_bucket_must_not_precede_first_symbol(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed):
+                image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), kind="gnu"))
+                struct.pack_into("<I", image, 0x2004, 2)
+                if mixed:
+                    struct.pack_into("<I", image, 0x2000, 2)
+                    struct.pack_into("<I", image, 0x201C, 2)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "GNU hash bucket index 1 is below first symbol 2"):
+                    annotate_module.Module(image)
+
     def test_gnu_hash_accepts_empty_symbol_table(self):
         module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
         self.assertEqual(module.symbol_count, 1)
