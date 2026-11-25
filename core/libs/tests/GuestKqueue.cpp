@@ -721,6 +721,7 @@ static void WatchKqueue() {
     const auto watched = static_cast<std::uintptr_t>(inner);
     int marker = 0;
     KernelEvent events[4]{};
+    RequireFailure(Apply(inner, Change(static_cast<std::uintptr_t>(inner), EvfiltRead, EvAdd)), GuestEinval);
     Require(Apply(inner, Change(5, EvfiltUser, EvAdd | EvClear)) == 0);
     Require(Apply(inner, Change(6, EvfiltUser, EvAdd | EvClear)) == 0);
     Require(Apply(outer, Change(watched, EvfiltRead, EvAdd, 0, 0, &marker)) == 0);
@@ -2034,6 +2035,10 @@ static void KqueueDescriptorOperations() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "watch-kqueue") {
+        WatchKqueue();
+        return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "cleared-race") {
         ClearedKqueueKeepsConcurrentActivations();
         return 0;
