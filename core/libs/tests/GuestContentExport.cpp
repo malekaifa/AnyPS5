@@ -181,6 +181,7 @@ int main() {
     Require(errno == 71);
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
+    Require(sceContentExportValidateContents(nullptr, 0) == static_cast<int>(0x809D3004u));
     Require(Throws([] { sceContentExportFinish(1); }));
     Require(ExportData(1) == static_cast<int>(0x809D3004u));
     sdkVersion = 0x03000000;
@@ -205,6 +206,10 @@ int main() {
     Require(sceContentExportTerm() == 0);
     Require(sceContentExportTerm() == static_cast<int>(0x809D3004u));
     Require(sceContentExportInit2(&param) == 0);
+    Require(sceContentExportValidateContents(nullptr, 0) == 0);
+    Require(sceContentExportValidateContents(nullptr, 1) == static_cast<int>(0x809D3016u));
+    std::int64_t contentId = 0;
+    Require(sceContentExportValidateContents(&contentId, 257) == static_cast<int>(0x809D3016u));
 
     std::set<int> sessions;
     for (int i = 0; i < 10; ++i) {
@@ -300,6 +305,7 @@ int main() {
     for (int session : sessions) Require(sceContentExportFinish(session) == 0);
     Require(sceContentExportTerm() == 0);
     Require(sceContentExportStart() == static_cast<int>(0x809D3004u));
+    Require(sceContentExportValidateContents(nullptr, 0) == static_cast<int>(0x809D3004u));
     Require(Throws([&] { sceContentExportFinish(reopened); }));
     Require(ExportData(reopened) == static_cast<int>(0x809D3004u));
     Require(Throws([&] { ExportFile(reopened); }));

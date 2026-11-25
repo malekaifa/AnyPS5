@@ -227,8 +227,11 @@ int APS5_VABI sceContentExportRenameContent(std::int64_t contentId, const char* 
 }
 
 int APS5_VABI sceContentExportValidateContents(const std::int64_t* contentIds, std::uint32_t count) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (!g_initialized.load()) return ErrorNotInitialized;
+    if (count > 0x100 || (count != 0 && contentIds == nullptr)) return ErrorInvalidArgument;
+    if (count == 0) return 0;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceContentExportStart(void) {
