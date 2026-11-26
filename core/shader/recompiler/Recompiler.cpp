@@ -278,7 +278,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     const auto supports = [&](spv::Capability capability) { return std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(capability)) != request.target.supportedCapabilities.end(); };
     translateOptions.nativeFloat16 = supports(spv::CapabilityFloat16) && supports(spv::CapabilityRoundingModeRTE) && supports(spv::CapabilityDenormPreserve);
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
-    translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && supports(spv::CapabilityFMAKHR);
+    translateOptions.nativeFloat16Fma = translateOptions.nativeFloat16 && request.target.fmaFloat16 && supports(spv::CapabilityFMAKHR);
     translateOptions.float16HostNans = translateOptions.nativeFloat16 && request.target.float16HostNans;
     translateOptions.nativeInteger16 = supports(spv::CapabilityInt16);
     translateOptions.floatMode = request.context.floatMode;
@@ -853,6 +853,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
+    targetOptions.fmaFloat32 = request.target.fmaFloat32;
     targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
     targetOptions.largePixelFunctionLdsBuffer = request.target.largePixelFunctionLdsBuffer;
     targetOptions.pixelFunctionStorageDwords = request.target.pixelFunctionStorageDwords;
