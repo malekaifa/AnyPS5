@@ -211,7 +211,7 @@ void RunReusedLabelAba(GuestBlock& block, Slot& slot) {
     const bool batchPendingAtReuse = slot.done == 0;
 
     // Reuse the exact guest dword targeted by the pending label as a valid
-    // WRITE_DATA packet header, just as a later title submission can reuse it.
+    // EVENT_WRITE header, followed by a WRITE_DATA marker to prove it parsed.
     reusedWords[0] = ReusedEventHeader;
     reusedWords[1] = 0x00000407u;
     reusedWords[2] = 0xc0033700u;
