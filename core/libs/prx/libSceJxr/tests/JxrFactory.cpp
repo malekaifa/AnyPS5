@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -103,6 +104,29 @@ void Factory() {
     Require(IsZero(static_cast<Jxr::PlainStream*>(stream)), "stream is not zeroed");
     Require(PKFree_nid_postfix(&stream) == 0 && !stream, "stream release fails");
 
+    const int blocksBeforeInvalidFactory = liveBlocks;
+    errno = 71;
+    RequireInvalidArgument([] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); },
+                           "factory creation accepted an unmapped output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidFactory, "unmapped factory output changed errno or leaked");
+    static std::byte readOnlyTarget{};
+    static void* const readOnlyFactoryOutput = &readOnlyTarget;
+    errno = 71;
+    RequireInvalidArgument([&] { PKCreateFactory_nid_postfix(const_cast<void**>(&readOnlyFactoryOutput), 0); },
+                           "factory creation accepted a read-only output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidFactory && readOnlyFactoryOutput == &readOnlyTarget,
+            "read-only factory output changed errno, value, or leaked");
+
+    errno = 71;
+    RequireInvalidArgument([] { PKFree_nid_postfix(reinterpret_cast<void**>(0x10)); }, "free accepted an unmapped output");
+    Require(errno == 71, "unmapped free output changed errno");
+    static std::byte readOnlyFreeTarget{};
+    static void* const readOnlyFreeSlot = &readOnlyFreeTarget;
+    errno = 71;
+    RequireInvalidArgument([&] { PKFree_nid_postfix(const_cast<void**>(&readOnlyFreeSlot)); },
+                           "free accepted a read-only output");
+    Require(errno == 71 && readOnlyFreeSlot == &readOnlyFreeTarget, "read-only free output changed errno or value");
+
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
     RequireInvalidArgument([] { PKCreateFactory_nid_postfix(nullptr, 0); }, "null factory pointer is accepted");
     RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(nullptr); }, "null stream pointer is accepted");
@@ -143,6 +167,19 @@ void Codecs() {
     Require(value->decoder == nullptr, "converter decoder is set");
     Require(PKFree_nid_postfix(&converter) == 0 && !converter, "converter release fails");
     RequireInvalidArgument([&] { factory->createFormatConverter(nullptr); }, "null converter pointer is accepted");
+    const int blocksBeforeInvalidConverter = liveBlocks;
+    errno = 71;
+    RequireInvalidArgument([&] { factory->createFormatConverter(reinterpret_cast<void**>(0x10)); },
+                           "converter creation accepted an unmapped output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidConverter,
+            "unmapped converter output changed errno or leaked");
+    static std::byte readOnlyConverterTarget{};
+    static void* const readOnlyConverterOutput = &readOnlyConverterTarget;
+    errno = 71;
+    RequireInvalidArgument([&] { factory->createFormatConverter(const_cast<void**>(&readOnlyConverterOutput)); },
+                           "converter creation accepted a read-only output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidConverter && readOnlyConverterOutput == &readOnlyConverterTarget,
+            "read-only converter output changed errno, value, or leaked");
 
     failAllocation = true;
     converter = reinterpret_cast<void*>(1);
