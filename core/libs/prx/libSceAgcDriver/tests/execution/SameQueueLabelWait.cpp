@@ -185,6 +185,35 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+// Keep Queue0 busy while WAIT_REG_MEM sees its own pending label. Reusing the
+// same dword as an EVENT_WRITE header after submit returns must not be clobbered
+// by the label store that is still queued behind the spin dispatch.
+void RunReusedLabelAba(Slot& slot) {
+    constexpr std::uint32_t ReusedEventHeader = 0xc0033700u;
+    constexpr std::uint32_t AbaSpinIterations = 1u << 26u;
+    slot.spinOutput.fill(0);
+    slot.spinDescriptor = {Low(slot.spinOutput.data()), High(slot.spinOutput.data()) & 0xffffu, sizeof(slot.spinOutput), 0x31016facu};
+    slot.label = 1;
+    slot.done = 0;
+    std::vector<std::uint32_t> words;
+    Dispatch(words, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), AbaSpinIterations});
+    ReleaseLabel(words, &slot.label, 1);
+    WaitEqual(words, &slot.label, 1);
+    WriteData(words, &slot.done, 1);
+    Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "same-queue label ABA submit failed");
+    const bool batchPendingAtReuse = slot.done == 0;
+    slot.label = ReusedEventHeader;
+    const auto start = std::chrono::steady_clock::now();
+    while (slot.done == 0) {
+        Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), "the same-queue label ABA submission did not finish");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    AgcDriverWaitIdle_nid_postfix();
+    Require(slot.label == ReusedEventHeader, "a late same-queue label store clobbered a reused EVENT_WRITE header");
+    std::cout << "same-queue label ABA: batch pending at CPU reuse: " << (batchPendingAtReuse ? "yes" : "no") << "\n";
+}
+
 std::uint64_t RunFlag(WatchedFlag& flag, std::uint32_t waits) {
     *flag.Done() = 0;
     std::vector<std::uint32_t> words;
@@ -280,6 +309,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         Run(slot, 1, false);
+        RunReusedLabelAba(slot);
         std::uint64_t extra = ~std::uint64_t{0};
         for (std::uint32_t attempt = 0; attempt < MaxAttempts && extra >= Waits / 2; ++attempt) {
             const auto without = Run(slot, 100 + attempt * 2 * Waits, false);
