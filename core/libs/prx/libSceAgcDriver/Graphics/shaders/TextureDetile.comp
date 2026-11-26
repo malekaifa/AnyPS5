@@ -285,8 +285,8 @@ void moveElement(uvec2 p) {
 }
 
 #ifdef WORD_GROUPS
-shared uint groupValues[64];
-shared uint groupValid[64];
+shared uint groupWords[32];
+shared uint groupLanes[32];
 shared uint groupDestinations[64];
 
 void main() {
@@ -300,35 +300,40 @@ void main() {
     uint dst = 0u;
     uint ranged = 0u;
     bool valid = inside && locate(p, src, dst, ranged);
+    if (index == 0u) {
+        groupWords[slot] = 0u;
+        groupLanes[slot] = 0u;
+    }
     groupDestinations[lane] = dst;
-    groupValid[lane] = valid ? 1u : 0u;
-    uint value = 0u;
+    barrier();
     if (valid) {
         uint mask = ELEMENT_BYTES == 1u ? 0xffu : 0xffffu;
 #ifdef LINEAR_IMAGE
-        value = imageLoad(linearImage, ivec2(p)).x & mask;
+        uint value = imageLoad(linearImage, ivec2(p)).x & mask;
 #else
-        value = (inputBuffer.data[src >> 2] >> ((src & 3u) * 8u)) & mask;
+        uint value = (inputBuffer.data[src >> 2] >> ((src & 3u) * 8u)) & mask;
 #endif
+        atomicOr(groupWords[slot], value << (index * ELEMENT_BYTES * 8u));
+        atomicOr(groupLanes[slot], 1u << index);
     }
-    groupValues[lane] = value;
     barrier();
-    uint firstLane = slot * count;
-    uint first = groupDestinations[firstLane];
-    bool whole = (first & 3u) == 0u;
-    for (uint i = 0u; i < count; ++i) {
-        whole = whole && groupValid[firstLane + i] != 0u && groupDestinations[firstLane + i] == first + i * ELEMENT_BYTES;
+    uint first = groupDestinations[slot * count];
+    bool whole = groupLanes[slot] == (1u << count) - 1u && (first & 3u) == 0u;
+    for (uint i = 1u; i < count; ++i) {
+        whole = whole && groupDestinations[slot * count + i] == first + i * ELEMENT_BYTES;
     }
+#ifndef LINEAR_IMAGE
+    // Diagnostic: keep the shared atomic packing and its read live, but force the buffer path
+    // through the per-element fallback so the single packed output store is never selected.
+    const uint packedWord = groupWords[slot];
+    whole = whole && params.width == 0u && packedWord != 0xffffffffu;
+#endif
     if (whole) {
         if (index == 0u) {
-            uint word = 0u;
-            for (uint i = 0u; i < count; ++i) {
-                word |= groupValues[firstLane + i] << (i * ELEMENT_BYTES * 8u);
-            }
 #ifdef LINEAR_IMAGE
-            tiledBuffer.data[first >> 2] = word;
+            tiledBuffer.data[first >> 2] = groupWords[slot];
 #else
-            outputBuffer.data[first >> 2] = word;
+            outputBuffer.data[first >> 2] = groupWords[slot];
 #endif
         }
     } else if (valid) {
