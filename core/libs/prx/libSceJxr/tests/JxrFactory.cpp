@@ -106,6 +106,10 @@ void Factory() {
 
     const int blocksBeforeInvalidFactory = liveBlocks;
     errno = 71;
+    RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(reinterpret_cast<void**>(0x10)); },
+                           "plain stream creation accepted an unmapped output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidFactory, "unmapped plain-stream output changed errno or leaked");
+    errno = 71;
     RequireInvalidArgument([] { PKCreateFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); },
                            "factory creation accepted an unmapped output");
     Require(errno == 71 && liveBlocks == blocksBeforeInvalidFactory, "unmapped factory output changed errno or leaked");
@@ -140,6 +144,12 @@ void Factory() {
 }
 
 void Codecs() {
+    const int blocksBeforeInvalidCodecFactory = liveBlocks;
+    errno = 71;
+    RequireInvalidArgument([] { PKCreateCodecFactory_nid_postfix(reinterpret_cast<void**>(0x10), 0); },
+                           "codec factory creation accepted an unmapped output");
+    Require(errno == 71 && liveBlocks == blocksBeforeInvalidCodecFactory,
+            "unmapped codec-factory output changed errno or leaked");
     void* raw = nullptr;
     Require(PKCreateCodecFactory_nid_postfix(&raw, 0x0101) == 0 && raw, "codec factory creation fails");
     auto* factory = static_cast<Jxr::CodecFactory*>(raw);
@@ -154,6 +164,10 @@ void Codecs() {
     }
     Require(codec == reinterpret_cast<void*>(1), "unknown IID writes the codec");
     RequireInvalidArgument([&] { factory->createCodec(nullptr, &codec); }, "null IID is accepted");
+    errno = 71;
+    RequireInvalidArgument([&] { factory->createCodec(reinterpret_cast<const std::uint32_t*>(0x10), &codec); },
+                           "codec creation accepted an unmapped IID");
+    Require(errno == 71 && codec == reinterpret_cast<void*>(1), "unmapped codec IID changed errno or output");
     RequireInvalidArgument([&] {
         const std::uint32_t iid = 1;
         factory->createCodec(&iid, nullptr);
