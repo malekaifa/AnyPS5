@@ -78,6 +78,10 @@ public:
     GuestBlock& operator=(const GuestBlock&) = delete;
 
     Slot& Data() { return *reinterpret_cast<Slot*>(block); }
+    std::uint32_t* Words(std::size_t offset) {
+        Require(offset + 5 * sizeof(std::uint32_t) <= BlockBytes, "same-queue label wait: command buffer is outside the guest block");
+        return reinterpret_cast<std::uint32_t*>(block + offset);
+    }
 
 private:
     std::uint8_t* block = nullptr;
@@ -188,29 +192,49 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
 // Keep Queue0 busy while WAIT_REG_MEM sees its own pending label. Reusing the
 // same dword as an EVENT_WRITE header after submit returns must not be clobbered
 // by the label store that is still queued behind the spin dispatch.
-void RunReusedLabelAba(Slot& slot) {
+void RunReusedLabelAba(GuestBlock& block, Slot& slot) {
     constexpr std::uint32_t ReusedEventHeader = 0xc0033700u;
     constexpr std::uint32_t AbaSpinIterations = 1u << 26u;
+    auto* reusedWords = block.Words(4096);
+    std::fill(reusedWords, reusedWords + 5, 0u);
+    reusedWords[0] = 1;
     slot.spinOutput.fill(0);
     slot.spinDescriptor = {Low(slot.spinOutput.data()), High(slot.spinOutput.data()) & 0xffffu, sizeof(slot.spinOutput), 0x31016facu};
-    slot.label = 1;
     slot.done = 0;
     std::vector<std::uint32_t> words;
     Dispatch(words, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), AbaSpinIterations});
-    ReleaseLabel(words, &slot.label, 1);
-    WaitEqual(words, &slot.label, 1);
+    ReleaseLabel(words, reusedWords, 1);
+    WaitEqual(words, reusedWords, 1);
     WriteData(words, &slot.done, 1);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "same-queue label ABA submit failed");
     const bool batchPendingAtReuse = slot.done == 0;
-    slot.label = ReusedEventHeader;
+
+    // Reuse the exact guest dword targeted by the pending label as a valid
+    // WRITE_DATA packet header, just as a later title submission can reuse it.
+    reusedWords[0] = ReusedEventHeader;
+    reusedWords[1] = 0x00100200u;
+    reusedWords[2] = Low(&slot.done);
+    reusedWords[3] = High(&slot.done);
+    reusedWords[4] = 2u;
+
     const auto start = std::chrono::steady_clock::now();
     while (slot.done == 0) {
         Require(std::chrono::steady_clock::now() - start < std::chrono::seconds(10), "the same-queue label ABA submission did not finish");
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
     AgcDriverWaitIdle_nid_postfix();
-    Require(slot.label == ReusedEventHeader, "a late same-queue label store clobbered a reused EVENT_WRITE header");
+    Require(reusedWords[0] == ReusedEventHeader, "a late same-queue label store clobbered a reused PM4 command header");
+
+    slot.done = 0;
+    Packet reusedPacket{reusedWords, 5, 0, {}};
+    Require(sceAgcDriverSubmitAcb(0x20, &reusedPacket) == 0, "the reused PM4 command buffer was rejected after the pending label store");
+    const auto reusedStart = std::chrono::steady_clock::now();
+    while (slot.done != 2) {
+        Require(std::chrono::steady_clock::now() - reusedStart < std::chrono::seconds(10), "the reused PM4 command buffer did not execute");
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    AgcDriverWaitIdle_nid_postfix();
     std::cout << "same-queue label ABA: batch pending at CPU reuse: " << (batchPendingAtReuse ? "yes" : "no") << "\n";
 }
 
@@ -309,7 +333,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         Run(slot, 1, false);
-        RunReusedLabelAba(slot);
+        RunReusedLabelAba(block, slot);
         std::uint64_t extra = ~std::uint64_t{0};
         for (std::uint32_t attempt = 0; attempt < MaxAttempts && extra >= Waits / 2; ++attempt) {
             const auto without = Run(slot, 100 + attempt * 2 * Waits, false);
