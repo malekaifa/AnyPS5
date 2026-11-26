@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -25,6 +26,29 @@ namespace {
 
 void Require(bool condition, const char* function, const char* message) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": " + message);
+}
+
+bool CopyGuestInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+bool CopyGuestOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return copied;
+}
+
+std::uintptr_t FieldAddress(const void* base, std::uintptr_t offset, std::size_t size, const char* function) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    Require(address != 0 && offset <= std::numeric_limits<std::uintptr_t>::max() - address, function,
+            "invalid guest field address");
+    const auto field = address + offset;
+    Require(size <= std::numeric_limits<std::uintptr_t>::max() - field, function, "invalid guest field range");
+    return field;
 }
 
 void* State(Jxr::BitIo* io, const char* function) {
@@ -99,27 +123,33 @@ std::int64_t APS5_VABI attachISRead_nid_postfix(Jxr::BitIo* io, Jxr::Stream* str
 std::int64_t APS5_VABI attachISWrite_nid_postfix(Jxr::BitIo* io, Jxr::Stream* stream) {
     Require(io != nullptr, __func__, "null bit state");
     Jxr::BitIo guestIo{};
-    const bool copiedIo = GuestCopyIn_nid_no_patch(&guestIo, io, sizeof(guestIo));
+    const bool copiedIo = CopyGuestInPreservingErrno(&guestIo, io, sizeof(guestIo));
     Require(copiedIo, __func__, "unreadable bit state");
     Require(stream != nullptr, __func__, "null stream");
     Jxr::Stream guestStream{};
-    const bool copiedStream = GuestCopyIn_nid_no_patch(&guestStream, stream, sizeof(guestStream));
+    const bool copiedStream = CopyGuestInPreservingErrno(&guestStream, stream, sizeof(guestStream));
     Require(copiedStream && guestStream.getPosition != nullptr, __func__, "missing stream position callback");
     const auto address = reinterpret_cast<std::uintptr_t>(io);
     Require(address >= 8192, __func__, "bit state address underflows the packet buffer");
-    guestStream.getPosition(stream, &io->referenceOffset);
+    std::size_t referenceOffset = guestIo.referenceOffset;
+    guestStream.getPosition(stream, &referenceOffset);
+    guestIo.referenceOffset = referenceOffset;
     guestIo.start = reinterpret_cast<std::uint8_t*>(address - 8192);
     guestIo.current = guestIo.start;
     guestIo.accumulator = 0;
     guestIo.bitsUsed = 0;
     guestIo.mask = ~8192;
     guestIo.stream = stream;
-    const int ioWriteErrno = errno;
-    const bool wroteIo = GuestCopyOut_nid_no_patch(
-        &io->accumulator,
+    const auto referenceField = FieldAddress(io, offsetof(Jxr::BitIo, referenceOffset), sizeof(referenceOffset), __func__);
+    const bool wroteReference = CopyGuestOutPreservingErrno(
+        reinterpret_cast<void*>(referenceField), &referenceOffset, sizeof(referenceOffset));
+    Require(wroteReference, __func__, "unwritable bit-state reference offset");
+    const auto stateField = FieldAddress(io, offsetof(Jxr::BitIo, accumulator),
+        offsetof(Jxr::BitIo, referenceOffset) - offsetof(Jxr::BitIo, accumulator), __func__);
+    const bool wroteIo = CopyGuestOutPreservingErrno(
+        reinterpret_cast<void*>(stateField),
         &guestIo.accumulator,
         offsetof(Jxr::BitIo, referenceOffset) - offsetof(Jxr::BitIo, accumulator));
-    errno = ioWriteErrno;
     Require(wroteIo, __func__, "unwritable bit state");
     return 0;
 }
