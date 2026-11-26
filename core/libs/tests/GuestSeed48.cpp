@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <stdexcept>
 
 static int failures = 0;
 
@@ -37,6 +38,38 @@ int main() {
     installed = seed48_nid_postfix(resetSeed);
     Require(SeedIs(installed, 0x4444, 0x5555, 0x6666), "seed48 did not return the new seed after lcong48");
     Require(drand48_nid_postfix() == 0x7b5ed753p-32, "seed48 did not restore the default multiplier and addend");
+
+    // Unreadable guest input is a host-safety fallback; console behavior is unmeasured.
+    const std::uint16_t stableSeed[3] = {0x7777, 0x8888, 0x9999};
+    std::uint16_t* const stableResult = seed48_nid_postfix(stableSeed);
+    srand48_nid_postfix(0x12345678);
+    const double expectedFirst = drand48_nid_postfix();
+    const double expectedSecond = drand48_nid_postfix();
+    srand48_nid_postfix(0x12345678);
+    Require(drand48_nid_postfix() == expectedFirst, "seed48 unreadable-input baseline changed");
+    bool seedThrew = false;
+    try {
+        seed48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        seedThrew = true;
+    }
+    Require(seedThrew, "seed48 accepted unreadable input");
+    Require(SeedIs(stableResult, 0x7777, 0x8888, 0x9999), "seed48 changed its saved result after unreadable input");
+    Require(drand48_nid_postfix() == expectedSecond, "seed48 changed rand48 state after unreadable input");
+
+    lcong48_nid_postfix(parameters);
+    const double configuredFirst = drand48_nid_postfix();
+    const double configuredSecond = drand48_nid_postfix();
+    lcong48_nid_postfix(parameters);
+    Require(drand48_nid_postfix() == configuredFirst, "lcong48 unreadable-input baseline changed");
+    bool lcongThrew = false;
+    try {
+        lcong48_nid_postfix(reinterpret_cast<const std::uint16_t*>(0x10));
+    } catch (const std::invalid_argument&) {
+        lcongThrew = true;
+    }
+    Require(lcongThrew, "lcong48 accepted unreadable input");
+    Require(drand48_nid_postfix() == configuredSecond, "lcong48 changed rand48 state after unreadable input");
 
     if (failures != 0) return 1;
     std::puts("seed48 new-seed contract passed");
