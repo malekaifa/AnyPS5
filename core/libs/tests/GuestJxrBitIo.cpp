@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -606,6 +607,10 @@ void RunEdges() {
     errno = 71;
     RequireInvalidArgument([&] { attachISWrite_nid_postfix(&validIo, unmappedStream); }, "unmapped stream in attachISWrite");
     Require(errno == 71, "attachISWrite unmapped stream changed errno");
+    errno = 71;
+    RequireInvalidArgument([&] { attachISWrite_nid_postfix(const_cast<Jxr::BitIo*>(&readOnlyIo), &okStream); },
+                           "read-only io in attachISWrite");
+    Require(errno == 71, "attachISWrite read-only io changed errno");
     errno = 71;
     RequireInvalidArgument([&] { putBit16z_nid_postfix(unmappedIo, 1, 1); }, "unmapped io in putBit16z");
     Require(errno == 71, "putBit16z unmapped io changed errno");
