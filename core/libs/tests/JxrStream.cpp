@@ -485,6 +485,16 @@ void MemoryCreate() {
         CloseMemory(stream);
     }
     RequireInvalidArgument([&] { CreateWS_Memory_nid_postfix(nullptr, bytes.data(), bytes.size()); }, "memory stream creation accepted a null stream pointer");
+    errno = 71;
+    RequireInvalidArgument([] { CreateWS_Memory_nid_postfix(reinterpret_cast<Jxr::Stream**>(0x10), nullptr, 0); },
+                           "memory stream creation accepted an unmapped output");
+    Require(errno == 71, "unmapped memory-stream output changed errno");
+    static Jxr::Stream readOnlyTarget{};
+    static Jxr::Stream* const readOnlyOutput = &readOnlyTarget;
+    errno = 71;
+    RequireInvalidArgument([&] { CreateWS_Memory_nid_postfix(const_cast<Jxr::Stream**>(&readOnlyOutput), nullptr, 0); },
+                           "memory stream creation accepted a read-only output");
+    Require(errno == 71 && readOnlyOutput == &readOnlyTarget, "read-only memory-stream output changed errno or value");
 }
 
 void MemoryRead() {
