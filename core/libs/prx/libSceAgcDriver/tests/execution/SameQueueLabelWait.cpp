@@ -79,7 +79,7 @@ public:
 
     Slot& Data() { return *reinterpret_cast<Slot*>(block); }
     std::uint32_t* Words(std::size_t offset) {
-        Require(offset + 5 * sizeof(std::uint32_t) <= BlockBytes, "same-queue label wait: command buffer is outside the guest block");
+        Require(offset + 7 * sizeof(std::uint32_t) <= BlockBytes, "same-queue label wait: command buffer is outside the guest block");
         return reinterpret_cast<std::uint32_t*>(block + offset);
     }
 
@@ -193,10 +193,10 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
 // same dword as an EVENT_WRITE header after submit returns must not be clobbered
 // by the label store that is still queued behind the spin dispatch.
 void RunReusedLabelAba(GuestBlock& block, Slot& slot) {
-    constexpr std::uint32_t ReusedEventHeader = 0xc0033700u;
+    constexpr std::uint32_t ReusedEventHeader = 0xc0004600u;
     constexpr std::uint32_t AbaSpinIterations = 1u << 26u;
     auto* reusedWords = block.Words(4096);
-    std::fill(reusedWords, reusedWords + 5, 0u);
+    std::fill(reusedWords, reusedWords + 7, 0u);
     reusedWords[0] = 1;
     slot.spinOutput.fill(0);
     slot.spinDescriptor = {Low(slot.spinOutput.data()), High(slot.spinOutput.data()) & 0xffffu, sizeof(slot.spinOutput), 0x31016facu};
@@ -213,10 +213,12 @@ void RunReusedLabelAba(GuestBlock& block, Slot& slot) {
     // Reuse the exact guest dword targeted by the pending label as a valid
     // WRITE_DATA packet header, just as a later title submission can reuse it.
     reusedWords[0] = ReusedEventHeader;
-    reusedWords[1] = 0x00100200u;
-    reusedWords[2] = Low(&slot.done);
-    reusedWords[3] = High(&slot.done);
-    reusedWords[4] = 2u;
+    reusedWords[1] = 0x00000407u;
+    reusedWords[2] = 0xc0033700u;
+    reusedWords[3] = 0x00100200u;
+    reusedWords[4] = Low(&slot.done);
+    reusedWords[5] = High(&slot.done);
+    reusedWords[6] = 2u;
 
     const auto start = std::chrono::steady_clock::now();
     while (slot.done == 0) {
@@ -227,7 +229,7 @@ void RunReusedLabelAba(GuestBlock& block, Slot& slot) {
     Require(reusedWords[0] == ReusedEventHeader, "a late same-queue label store clobbered a reused PM4 command header");
 
     slot.done = 0;
-    Packet reusedPacket{reusedWords, 5, 0, {}};
+    Packet reusedPacket{reusedWords, 7, 0, {}};
     Require(sceAgcDriverSubmitAcb(0x20, &reusedPacket) == 0, "the reused PM4 command buffer was rejected after the pending label store");
     const auto reusedStart = std::chrono::steady_clock::now();
     while (slot.done != 2) {
