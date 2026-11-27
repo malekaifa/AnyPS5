@@ -25,8 +25,10 @@ void _emitHalf(StubBodyBuilder& body, const WideStoreHalf& half) {
 }
 
 bool _overlapsSpill(const MemoryOperand& memory) {
-    if (!ScalarLowering::UnindexedStack(memory))
+    if (!memory.StackBase)
         return false;
+    if (!ScalarLowering::UnindexedStack(memory))
+        return true;
     const auto displacement = static_cast<std::int64_t>(memory.Displacement);
     return displacement < kSpillBytes - kFrameSize && displacement + kStoreBytes > -kFrameSize;
 }

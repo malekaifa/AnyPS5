@@ -2793,7 +2793,8 @@ void wideStoreSpillFrame() {
     for (const auto displacement : {-184, -185, -128, -120, -96, 0, 256})
         require(!rejects(displacement), "A 32-bit stack operand outside the wide-store spill frame was rejected");
     const Bytes indexed = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0C};
-    require(!wideStoreStubBody(indexed).empty(), "A 32-bit stack operand with an index was rejected");
+    requireFailure([&] { (void)wideStoreStubBody(indexed); },
+        "A 32-bit RSP-based indexed store that can alias the spill frame was accepted");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
