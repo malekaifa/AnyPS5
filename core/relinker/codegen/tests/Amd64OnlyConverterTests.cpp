@@ -2443,6 +2443,37 @@ void wideStoreMaterializedExecution() {
                     "materialized 256-bit store stub wrote past its operand");
         }
     }
+#if defined(MAP_FIXED_NOREPLACE)
+    auto* const boundaryAddress = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0xFFFFF000});
+    auto* boundaryPages = static_cast<std::uint8_t*>(mmap(boundaryAddress, 8192,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0));
+    if (boundaryPages == boundaryAddress) {
+        for (const auto& body : bodies) {
+            std::memcpy(code, body.data(), body.size());
+            std::memset(boundaryPages, 0, 8192);
+            auto* destination = boundaryPages + 0xFF0;
+            const auto address = reinterpret_cast<std::uint64_t>(destination);
+            asm volatile(
+                "vmovups (%[source]), %%ymm0\n\t"
+                "sub $128, %%rsp\n\t"
+                "call *%[code]\n\t"
+                "add $128, %%rsp\n\t"
+                :
+                : [source] "r"(source), [code] "r"(code), "a"(address)
+                : "memory", "ymm0");
+            require(std::memcmp(destination, source, sizeof(source)) == 0,
+                    "materialized 256-bit store did not preserve the upper half across the 4 GiB address boundary");
+            require(std::all_of(boundaryPages, destination, [](const std::uint8_t value) { return value == 0; }),
+                    "materialized 256-bit store wrote before its 4 GiB-boundary operand");
+            require(std::all_of(destination + sizeof(source), boundaryPages + 8192, [](const std::uint8_t value) { return value == 0; }),
+                    "materialized 256-bit store wrote past its 4 GiB-boundary operand");
+        }
+        munmap(boundaryPages, 8192);
+    } else {
+        if (boundaryPages != MAP_FAILED) munmap(boundaryPages, 8192);
+        std::cout << "skipped: materialized 256-bit store execution, exact 4 GiB boundary mapping is unavailable\n";
+    }
+#endif
     munmap(code, 4096);
     munmap(pages, 8192);
 }
