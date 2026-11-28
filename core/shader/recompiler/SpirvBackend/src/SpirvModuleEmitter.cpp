@@ -232,7 +232,7 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
     }
     if (state.splitState && (kind == StageInputKind::WorkgroupId || kind == StageInputKind::GlobalInvocationId)) {
         const auto counts = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
-        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), SplitSliceGroup(state));
         auto divided = linear;
         for (std::uint32_t axis = 0; axis < component; ++axis) divided = EmitBinaryU32(state, spv::OpUDiv, divided, counts(axis));
         const auto group = component == 2u ? divided : EmitBinaryU32(state, spv::OpUMod, divided, counts(component));
@@ -1404,6 +1404,7 @@ void DefineMeshOutputs(SpirvEmitterState& state) {
         }
     }
     state.meshAllocation = MeshArray(state, spv::StorageClassWorkgroup, TypeU32(state), 2u);
+    if (state.meshSoftwareControlBarriers) state.meshSoftwareBarrier = MeshArray(state, spv::StorageClassWorkgroup, TypeU32(state), 2u);
     state.meshPrimitiveData = MeshArray(state, spv::StorageClassPrivate, TypeU32(state), state.laneCount);
     state.meshPrimitives = MeshArray(state, spv::StorageClassOutput, mesh.outputPrimitiveSize == 1u ? TypeU32(state) : TypeU32Vector(state, mesh.outputPrimitiveSize), mesh.maxPrimitives);
     state.meshCull = MeshArray(state, spv::StorageClassOutput, TypeBool(state), mesh.maxPrimitives);
@@ -1523,9 +1524,15 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
     EmitIfCondition(state, firstInvocation, [&]() {
         for (std::uint32_t field = 0; field < 2u; field++) {
             state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshAllocation, spv::StorageClassWorkgroup, TypeU32(state), ConstantU32(state, field)), ConstantU32(state, 0u));
+            if (state.meshSoftwareControlBarriers) {
+                state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshSoftwareBarrier, spv::StorageClassWorkgroup, TypeU32(state), ConstantU32(state, field)), ConstantU32(state, 0u));
+            }
         }
     });
     if (state.meshWindowBuffer) EmitMeshWindowClaim(state, firstInvocation);
+    if (state.meshSoftwareControlBarriers) {
+        state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+    }
     state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.meshGuestFunc);
     state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
     if (state.meshWindowBuffer) EmitMeshWindowRelease(state, firstInvocation);
@@ -2025,7 +2032,7 @@ void EmitProgram(SpirvEmitterState& state) {
     if (state.splitState) {
         const auto count = [&](std::uint32_t axis) { return LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupCountDword + axis)); };
         const auto groups = EmitBinaryU32(state, spv::OpIMul, EmitBinaryU32(state, spv::OpIMul, count(0u), count(1u)), count(2u));
-        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u));
+        const auto linear = EmitAddU32(state, LoadSplitStateWord(state, ConstantU32(state, SplitStateGroupBaseDword)), SplitSliceGroup(state));
         const auto outside = state.module.AllocateId();
         state.module.AddFunction(spv::OpUGreaterThanEqual, TypeBool(state), outside, linear, groups);
         const auto stop = state.module.AllocateId();

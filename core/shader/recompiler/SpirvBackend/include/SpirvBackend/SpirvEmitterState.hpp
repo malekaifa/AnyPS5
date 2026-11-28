@@ -183,6 +183,8 @@ struct SpirvEmitterState {
     std::uint32_t bdaWriteProbeFunction = 0;
     std::uint32_t bdaAtomicPointerFunction = 0;
     std::uint32_t bdaNoteWriteFunction = 0;
+    std::uint32_t bdaStorePageFunction = 0;
+    std::uint32_t bdaStorePageSpecialization = 0;
     std::array<std::uint32_t, 2> bdaByteWriteFunctions {};
     std::uint32_t bdaFaultFunction = 0;
     bool nativeF16ModesEmitted = false;
@@ -254,6 +256,7 @@ struct SpirvEmitterState {
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     bool meshWindowBuffer = false;
+    bool meshSoftwareControlBarriers = false;
     bool splitState = false;
     std::uint32_t splitStateVariable = 0;
     std::uint32_t meshWindowBufferVariable = 0;
@@ -273,6 +276,7 @@ struct SpirvEmitterState {
     std::map<std::uint32_t, std::uint32_t> exportShadowVariables;
     bool pixelStopStored = false;
     std::uint32_t meshAllocation = 0;
+    std::uint32_t meshSoftwareBarrier = 0;
     std::uint32_t meshPrimitiveData = 0;
     std::uint32_t meshPrimitives = 0;
     std::uint32_t meshCull = 0;
